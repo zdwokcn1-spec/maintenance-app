@@ -1,5 +1,6 @@
 streamlit
 pandas
 matplotlib
+setuptools
 japanize-matplotlib
 st-gsheets-connection
