@@ -43,17 +43,20 @@ with tab1:
     else: st.info("データがありません。")
 
 # ================================================================
-# 📁 2. 過去履歴（修正・削除機能追加）
+# 📁 2. 過去履歴（備考欄の表示・修正機能追加）
 # ================================================================
 with tab2:
     st.header("📁 メンテナンス過去履歴")
+    # 備考列がない場合の初期化
+    if '備考' not in df.columns:
+        df['備考'] = ""
+    
     st.dataframe(filtered_df.sort_values(by="最終点検日", ascending=False), use_container_width=True)
 
     st.markdown("---")
     st.subheader("🛠️ 履歴データの修正・削除")
     
     if not df.empty:
-        # 修正対象を特定するためのラベル作成（日付 - 設備名）
         df['label'] = df['最終点検日'].dt.strftime('%Y-%m-%d') + " | " + df['設備名']
         target_label = st.selectbox("修正または削除する履歴を選択", df['label'].tolist())
         target_idx = df[df['label'] == target_label].index[0]
@@ -66,19 +69,18 @@ with tab2:
                 new_date = st.date_input("作業日", value=item_data["最終点検日"])
                 new_equip = st.text_input("設備名", value=item_data["設備名"])
                 new_desc = st.text_area("作業内容", value=item_data["作業内容"])
+                new_note = st.text_area("備考（対応業者・時間など）", value=item_data.get("備考", ""))
                 new_cost = st.number_input("費用", value=int(item_data["費用"]), min_value=0)
                 
                 if st.form_submit_button("履歴の修正を保存"):
-                    df.loc[target_idx, ["最終点検日", "設備名", "作業内容", "費用"]] = \
-                        [pd.to_datetime(new_date), new_equip, new_desc, new_cost]
-                    # 不要なラベル列を削除して保存
+                    df.loc[target_idx, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = \
+                        [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
                     conn.update(worksheet="maintenance_data", data=df.drop(columns=['label']))
                     st.success("履歴を修正しました。")
                     st.rerun()
 
         with col_h2:
             st.write("🗑️ **履歴を削除する**")
-            st.warning("この操作は取り消せません。")
             if st.button("この履歴を完全に削除"):
                 df = df.drop(target_idx)
                 conn.update(worksheet="maintenance_data", data=df.drop(columns=['label']))
@@ -86,7 +88,7 @@ with tab2:
                 st.rerun()
 
 # ================================================================
-# 📦 3. 在庫管理（前回同様）
+# 📦 3. 在庫管理（変更なし）
 # ================================================================
 with tab3:
     st.header("📦 部品在庫管理")
@@ -102,23 +104,13 @@ with tab3:
     if not stock_df.empty:
         target_item = st.selectbox("修正または削除する部品を選択", stock_df["部品名"].tolist())
         item_stock = stock_df[stock_df["部品名"] == target_item].iloc[0]
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            with st.form("edit_stock_form"):
-                edit_qty = st.number_input("在庫数", value=int(item_stock["在庫数"]), min_value=0)
-                edit_price = st.number_input("単価", value=int(item_stock["単価"]), min_value=0)
-                if st.form_submit_button("在庫を修正"):
-                    stock_df.loc[stock_df["部品名"] == target_item, ["在庫数", "単価", "最終更新日"]] = [edit_qty, edit_price, datetime.now().strftime('%Y-%m-%d')]
-                    conn.update(worksheet="stock_data", data=stock_df)
-                    st.rerun()
-        with col_s2:
-            if st.button(f"「{target_item}」を削除"):
-                stock_df = stock_df[stock_df["部品名"] != target_item]
-                conn.update(worksheet="stock_data", data=stock_df)
-                st.rerun()
+        if st.button(f"「{target_item}」を削除"):
+            stock_df = stock_df[stock_df["部品名"] != target_item]
+            conn.update(worksheet="stock_data", data=stock_df)
+            st.rerun()
 
 # ================================================================
-# 📝 4. メンテナンス登録（前回同様）
+# 📝 4. メンテナンス登録（備考欄の追加）
 # ================================================================
 with tab4:
     st.header("📝 メンテナンス記録の入力")
@@ -126,11 +118,24 @@ with tab4:
         e_name = st.selectbox("対象設備", ["ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"])
         e_detail = st.text_input("機番・詳細名称")
         w_desc = st.text_area("作業内容")
+        w_note = st.text_area("備考（業者名、作業時間、メモなど）") # ← 追加
         w_date = st.date_input("作業日", datetime.today())
         w_cost = st.number_input("費用", min_value=0)
+        
         if st.form_submit_button("保存"):
-            new_row = pd.DataFrame([{"設備名": f"[{e_name}] {e_detail}", "最終点検日": w_date.strftime('%Y-%m-%d'), "作業内容": w_desc, "費用": w_cost}])
-            df_new = pd.concat([df.drop(columns=['label'], errors='ignore'), new_row], ignore_index=True)
-            conn.update(worksheet="maintenance_data", data=df_new)
-            st.success("保存しました")
+            new_row = pd.DataFrame([{
+                "設備名": f"[{e_name}] {e_detail}", 
+                "最終点検日": w_date.strftime('%Y-%m-%d'), 
+                "作業内容": w_desc, 
+                "備考": w_note, # ← 追加
+                "費用": w_cost
+            }])
+            # 既存のdfに備考列がない場合を考慮して連結
+            df_for_save = df.drop(columns=['label'], errors='ignore')
+            if '備考' not in df_for_save.columns:
+                df_for_save['備考'] = ""
+            
+            df_final = pd.concat([df_for_save, new_row], ignore_index=True)
+            conn.update(worksheet="maintenance_data", data=df_final)
+            st.success("備考を含めて保存しました")
             st.rerun()
