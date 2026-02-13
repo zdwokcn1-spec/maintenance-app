@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import matplotlib.pyplot as plt
 import japanize_matplotlib
 from streamlit_gsheets import GSheetsConnection
@@ -10,6 +10,10 @@ import io
 
 # --- ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理", layout="wide")
+
+# --- タブの状態をセッションで管理（再読み込み対策） ---
+if "current_tab" not in st.session_state:
+    st.session_state.current_tab = 1  # 初期表示を「過去履歴」に設定
 
 # ---------- データ読み込み ----------
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -21,7 +25,7 @@ def load_data():
 
 df_raw, stock_df_raw = load_data()
 
-# --- 列名の強制修復ロジック (KeyError対策) ---
+# --- 列名の強制修復ロジック ---
 def fix_columns(df, target_cols):
     if df.empty:
         return pd.DataFrame(columns=target_cols)
@@ -43,7 +47,7 @@ df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce').f
 df['費用'] = pd.to_numeric(df['費用'], errors='coerce').fillna(0).astype(int)
 stock_df['在庫数'] = pd.to_numeric(stock_df['在庫数'], errors='coerce').fillna(0).astype(int)
 
-# --- 画像処理関数（圧縮強化） ---
+# --- 画像処理関数 ---
 def image_to_base64(uploaded_file):
     if uploaded_file is not None:
         img = Image.open(uploaded_file)
@@ -54,16 +58,34 @@ def image_to_base64(uploaded_file):
         return base64.b64encode(buffered.getvalue()).decode()
     return None
 
-# --- タブ状態管理 ---
-query_params = st.query_params
-default_tab = int(query_params.get("tab", 1))
+# --- タブの作成 (value引数で現在のタブを指定) ---
 tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
+# セッション状態に基づいて表示するタブを決定
 tabs = st.tabs(tab_titles)
 
 categories = ["すべて", "ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
 
 # ================================================================
-# 📁 2. 過去履歴 (修正・削除)
+# 📊 0. ダッシュボード
+# ================================================================
+with tabs[0]:
+    st.header("📊 メンテナンス状況概況")
+    if not df.empty:
+        df['大分類'] = df['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.subheader("💰 設備別・累計費用")
+            cost_by_equip = df.groupby('大分類')['費用'].sum().sort_values(ascending=True)
+            fig1, ax1 = plt.subplots(); cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71'); st.pyplot(fig1)
+        with col_g2:
+            st.subheader("📈 月別・設備別の費用推移")
+            df_trend = df.copy()
+            df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
+            pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='費用', aggfunc='sum').fillna(0)
+            fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
+
+# ================================================================
+# 📁 1. 過去履歴
 # ================================================================
 with tabs[1]:
     st.header("📁 メンテナンス過去履歴")
@@ -102,13 +124,16 @@ with tabs[1]:
                 if img_b: df.loc[idx_h, "画像"] = img_b
                 df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
                 conn.update(worksheet="maintenance_data", data=df.drop(columns=['label'], errors='ignore'))
+                st.session_state.current_tab = 1 # タブ位置を保持
                 st.rerun()
+
         if st.button("🚨 この履歴を完全に削除"):
             conn.update(worksheet="maintenance_data", data=df.drop(idx_h).drop(columns=['label'], errors='ignore'))
+            st.session_state.current_tab = 1
             st.rerun()
 
 # ================================================================
-# 📦 3. 在庫管理 (修正・【削除機能追加】)
+# 📦 2. 在庫管理
 # ================================================================
 with tabs[2]:
     st.header("📦 部品在庫管理")
@@ -124,6 +149,7 @@ with tabs[2]:
             if st.form_submit_button("登録"):
                 new_s = pd.DataFrame([{"分類": nc, "部品名": nn, "在庫数": nq, "単価": np, "発注点": 5, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
                 conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_s], ignore_index=True))
+                st.session_state.current_tab = 2
                 st.rerun()
 
     st.markdown("---")
@@ -137,26 +163,21 @@ with tabs[2]:
         s_row = stock_df.loc[s_idx]
         
         with st.form("edit_stock_form"):
-            col_s1, col_s2 = st.columns(2)
-            eq = col_s1.number_input("在庫数", value=int(s_row["在庫数"]))
-            ep = col_s2.number_input("単価", value=int(s_row["単価"]))
+            eq = st.number_input("在庫数", value=int(s_row["在庫数"]))
+            ep = st.number_input("単価", value=int(s_row["単価"]))
             if st.form_submit_button("在庫修正を保存"):
                 stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
                 conn.update(worksheet="stock_data", data=stock_df)
+                st.session_state.current_tab = 2
                 st.rerun()
         
-        # --- ここが削除機能 ---
-        if st.button(f"🗑️ {t_item} をデータから削除する"):
-            # 選択した部品以外を残す
-            updated_stock = stock_df[stock_df["部品名"] != t_item]
-            conn.update(worksheet="stock_data", data=updated_stock)
-            st.success(f"{t_item} を削除しました")
+        if st.button(f"🗑️ {t_item} をデータから削除"):
+            conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != t_item])
+            st.session_state.current_tab = 2
             st.rerun()
-    else:
-        st.info("この分類に登録されている部品はありません")
 
 # ================================================================
-# 📝 4. メンテナンス登録 (省略なし)
+# 📝 3. メンテナンス登録
 # ================================================================
 with tabs[3]:
     st.header("📝 メンテナンス記録の入力")
@@ -169,4 +190,5 @@ with tabs[3]:
             img_b = image_to_base64(up_file) if up_file else ""
             new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": img_b}])
             conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_r], ignore_index=True))
+            st.session_state.current_tab = 3
             st.rerun()
