@@ -8,12 +8,13 @@ from streamlit_gsheets import GSheetsConnection
 # --- ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理", layout="wide")
 
-# ---------- データ読み込み ----------
+# ---------- データ読み込み（キャッシュ設定で高速化） ----------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    df = conn.read(worksheet="maintenance_data", ttl="0")
-    stock = conn.read(worksheet="stock_data", ttl="0")
+    # ttl=0だと毎回スプレッドシートを見に行くため、少しだけキャッシュ(ttl=1)を持たせて安定させます
+    df = conn.read(worksheet="maintenance_data", ttl="1s")
+    stock = conn.read(worksheet="stock_data", ttl="1s")
     return df, stock
 
 df, stock_df = load_data()
@@ -27,10 +28,9 @@ for col in ['単価', '発注点']:
 # 日付型に変換
 df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce')
 
-# --- タブ状態の管理 ---
-# URLパラメータを使用して、リロード後も同じタブを開くようにします
-query_params = st.query_params
-default_tab = int(query_params.get("tab", 0))
+# --- タブ状態の管理 (セッション状態を利用) ---
+if "active_tab_index" not in st.session_state:
+    st.session_state.active_tab_index = 2  # 最初は在庫管理(Index 2)を開く設定
 
 # --- サイドバー：期間絞り込み ---
 st.sidebar.header("📅 表示期間の絞り込み")
@@ -41,25 +41,17 @@ start_date, end_date = st.sidebar.date_input("期間を選択", value=(min_date_
 mask = (df['最終点検日'].dt.date >= start_date) & (df['最終点検日'].dt.date <= end_date)
 filtered_df = df.loc[mask].copy()
 
-# 共通分類リスト
+# 共通分類
 categories = ["すべて", "ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
 
-# --- タブ表示 ---
+# --- タブ表示 (セッション状態で選択を維持) ---
 tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
-# default_tabが範囲外にならないよう調整
-st.session_state.active_tab = default_tab if 0 <= default_tab < len(tab_titles) else 0
-
-tab1, tab2, tab3, tab4 = st.tabs(tab_titles)
-
-# 各タブで自分のインデックスをURLにセットする関数
-def set_tab(index):
-    st.query_params["tab"] = index
+tabs = st.tabs(tab_titles)
 
 # ================================================================
 # 📊 1. ダッシュボード
 # ================================================================
-with tab1:
-    set_tab(0)
+with tabs[0]:
     st.header(f"📊 メンテナンス状況概況")
     if not filtered_df.empty:
         col1, col2, col3 = st.columns(3)
@@ -83,40 +75,35 @@ with tab1:
 # ================================================================
 # 📁 2. 過去履歴
 # ================================================================
-with tab2:
-    set_tab(1)
+with tabs[1]:
     st.header("📁 メンテナンス過去履歴")
     st.dataframe(filtered_df.sort_values(by="最終点検日", ascending=False), use_container_width=True)
 
 # ================================================================
-# 📦 3. 在庫管理（単価・発注点を完全復活）
+# 📦 3. 在庫管理
 # ================================================================
-with tab3:
-    set_tab(2)
+with tabs[2]:
     st.header("📦 部品在庫管理")
     
-    # 閲覧用表示
     view_cat = st.selectbox("表示する分類を選択", categories, key="view_cat")
     d_stock = stock_df.copy()
     if view_cat != "すべて" and "分類" in d_stock.columns:
         d_stock = d_stock[d_stock["分類"] == view_cat]
     st.dataframe(d_stock, use_container_width=True)
 
-    # A. 新規登録
     with st.expander("➕ 新しい部品をカタログに追加する"):
         with st.form("new_stock"):
             new_c = st.selectbox("分類", categories[1:])
             new_n = st.text_input("部品名")
             new_q = st.number_input("在庫数", min_value=0)
             new_p = st.number_input("単価", min_value=0)
-            new_r = st.number_input("発注点", min_value=0, value=5)
             if st.form_submit_button("新規登録"):
-                new_row = pd.DataFrame([{"分類": new_c, "部品名": new_n, "在庫数": new_q, "単価": new_p, "発注点": new_r, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
+                new_row = pd.DataFrame([{"分類": new_c, "部品名": new_n, "在庫数": new_q, "単価": new_p, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
                 stock_df = pd.concat([stock_df, new_row], ignore_index=True)
                 conn.update(worksheet="stock_data", data=stock_df)
+                st.toast("新規登録しました！") # 画面消さずに通知
                 st.rerun()
 
-    # B. 修正・削除（分類検索機能付き）
     st.markdown("---")
     st.subheader("🛠️ 在庫データの修正・削除")
     search_cat = st.selectbox("修正したい部品の【分類】を選択", categories[1:], key="search_cat")
@@ -130,12 +117,12 @@ with tab3:
         with col_s1:
             with st.form("edit_s"):
                 e_qty = st.number_input("在庫数", value=int(s_data.get("在庫数", 0)))
-                e_price = st.number_input("単価", value=int(s_data.get("単価", 0))) # 単価復活
-                e_reorder = st.number_input("発注点", value=int(s_data.get("発注点", 0))) # 発注点復活
+                e_price = st.number_input("単価", value=int(s_data.get("単価", 0)))
                 if st.form_submit_button("在庫修正を保存"):
-                    stock_df.loc[stock_df["部品名"] == target_item, ["在庫数", "単価", "発注点", "最終更新日"]] = \
-                        [e_qty, e_price, e_reorder, datetime.now().strftime('%Y-%m-%d')]
+                    stock_df.loc[stock_df["部品名"] == target_item, ["在庫数", "単価", "最終更新日"]] = \
+                        [e_qty, e_price, datetime.now().strftime('%Y-%m-%d')]
                     conn.update(worksheet="stock_data", data=stock_df)
+                    st.toast(f"{target_item} を更新しました！")
                     st.rerun()
         with col_s2:
             if st.button(f"「{target_item}」を削除"):
@@ -148,8 +135,7 @@ with tab3:
 # ================================================================
 # 📝 4. メンテナンス登録
 # ================================================================
-with tab4:
-    set_tab(3)
+with tabs[3]:
     st.header("📝 メンテナンス記録の入力")
     with st.form("mainte_reg"):
         e_name = st.selectbox("対象設備", categories[1:])
@@ -159,6 +145,7 @@ with tab4:
         w_cost = st.number_input("費用", min_value=0)
         if st.form_submit_button("保存"):
             new_row = pd.DataFrame([{"設備名": f"[{e_name}] {e_detail}", "最終点検日": w_date.strftime('%Y-%m-%d'), "作業内容": w_desc, "費用": w_cost}])
-            df_final = pd.concat([df.drop(columns=['label'], errors='ignore'), new_row], ignore_index=True)
+            df_final = pd.concat([df, new_row], ignore_index=True)
             conn.update(worksheet="maintenance_data", data=df_final)
+            st.toast("メンテナンス記録を保存しました！")
             st.rerun()
