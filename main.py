@@ -21,8 +21,13 @@ def load_data():
 
 df, stock_df = load_data()
 
-# 必須列の初期化
-for col in ['備考', '費用', '画像']:
+# 必須列の初期化（ここをより厳格に修正）
+if '画像' not in df.columns:
+    df['画像'] = ""
+# 画像列の NaN や 0 を空文字に変換してエラーを防ぐ
+df['画像'] = df['画像'].fillna("").replace(0, "").replace("0", "")
+
+for col in ['備考', '費用']:
     if col not in df.columns: df[col] = "" if col != '費用' else 0
 for col in ['分類', '部品名', '在庫数', '単価', '発注点']:
     if col not in stock_df.columns: stock_df[col] = 0 if col in ['在庫数', '単価', '発注点'] else ""
@@ -34,7 +39,7 @@ df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce')
 def image_to_base64(uploaded_file):
     if uploaded_file is not None:
         img = Image.open(uploaded_file)
-        img.thumbnail((500, 500)) # 圧縮
+        img.thumbnail((500, 500)) 
         buffered = io.BytesIO()
         img.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode()
@@ -42,7 +47,7 @@ def image_to_base64(uploaded_file):
 
 # --- タブ状態の管理 ---
 query_params = st.query_params
-default_tab = int(query_params.get("tab", 2)) # デフォルトを在庫管理(2)に設定
+default_tab = int(query_params.get("tab", 1)) # エラーが起きた履歴タブ(1)をデフォルトに
 tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 tab1, tab2, tab3, tab4 = st.tabs(tab_titles)
 
@@ -73,22 +78,31 @@ with tab1:
             fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
 
 # ================================================================
-# 📁 2. 過去履歴（修正・削除・画像表示）
+# 📁 2. 過去履歴（エラー対策強化版）
 # ================================================================
 with tab2:
     set_tab(1)
     st.header("📁 メンテナンス過去履歴")
     
-    # 履歴カード表示
     for i, row in df.sort_values(by="最終点検日", ascending=False).iterrows():
         with st.expander(f"{row['最終点検日'].strftime('%Y-%m-%d')} | {row['設備名']}"):
             c1, c2 = st.columns([2, 1])
             with c1:
-                st.write(f"**内容:** {row['作業内容']}\n\n**備考:** {row['備考']}\n\n**費用:** {row['費用']:,} 円")
+                st.write(f"**内容:** {row['作業内容']}")
+                st.write(f"**備考:** {row['備考']}")
+                st.write(f"**費用:** {row['費用']:,} 円")
             with c2:
-                if row.get('画像'):
-                    st.image(base64.b64decode(row['画像']), use_container_width=True)
+                # 画像データが文字列であり、かつ空でない場合のみデコードする
+                img_data = row.get('画像', "")
+                if isinstance(img_data, str) and len(img_data) > 10: # Base64はある程度の長さがあるため
+                    try:
+                        st.image(base64.b64decode(img_data), use_container_width=True)
+                    except:
+                        st.warning("画像の読み込みに失敗しました")
+                else:
+                    st.info("写真なし")
 
+    # --- 修正・削除フォーム ---
     st.markdown("---")
     st.subheader("🛠️ 履歴の修正・削除")
     if not df.empty:
@@ -106,7 +120,6 @@ with tab2:
                 new_cost = st.number_input("費用", value=int(curr_h["費用"]))
                 new_note = st.text_area("備考", curr_h["備考"])
             new_desc = st.text_area("作業内容", curr_h["作業内容"])
-            
             if st.form_submit_button("修正保存"):
                 df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
                 conn.update(worksheet="maintenance_data", data=df.drop(columns=['label'], errors='ignore'))
@@ -116,19 +129,16 @@ with tab2:
             st.rerun()
 
 # ================================================================
-# 📦 3. 在庫管理（新規・修正・削除）
+# 📦 3. 在庫管理（復活）
 # ================================================================
 with tab3:
     set_tab(2)
     st.header("📦 部品在庫管理")
-    
-    # 一覧表示
     v_cat = st.selectbox("分類フィルタ", categories, key="v_cat")
     d_stock = stock_df.copy()
     if v_cat != "すべて": d_stock = d_stock[d_stock["分類"] == v_cat]
     st.dataframe(d_stock, use_container_width=True)
 
-    # 新規登録
     with st.expander("➕ 新しい部品を登録"):
         with st.form("new_s"):
             nc, nn = st.selectbox("分類", categories[1:]), st.text_input("部品名")
@@ -138,7 +148,6 @@ with tab3:
                 conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_s], ignore_index=True))
                 st.rerun()
 
-    # 修正・削除
     st.markdown("---")
     st.subheader("🛠️ 在庫の修正・削除")
     s_cat = st.selectbox("分類検索", categories[1:], key="s_cat")
