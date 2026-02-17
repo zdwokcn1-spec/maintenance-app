@@ -1,6 +1,10 @@
-st-japanize-matplotlib
-streamlit-gsheets
-Pillow
+streamlit
+pandas
+matplotlib
+setuptools
+japanize-matplotlib
+st-gsheets-connection
+
 
 
 
