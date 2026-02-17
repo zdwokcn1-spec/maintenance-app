@@ -1,6 +1,4 @@
 extra-streamlit-components
 st-japanize-matplotlib
 streamlit-gsheets
-pandas
 Pillow
-matplotlib
