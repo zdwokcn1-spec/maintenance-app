@@ -4,3 +4,7 @@ matplotlib
 setuptools
 japanize-matplotlib
 st-gsheets-connection
+extra-streamlit-components
+st-japanize-matplotlib
+streamlit-gsheets
+pandas
