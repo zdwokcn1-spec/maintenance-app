@@ -1,6 +1,7 @@
-extra-streamlit-components
 st-japanize-matplotlib
 streamlit-gsheets
+Pillow
+
 
 
 
