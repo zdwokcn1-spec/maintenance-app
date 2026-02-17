@@ -8,47 +8,38 @@ import base64
 from PIL import Image
 import io
 import time
-import extra_streamlit_components as stx  # クッキー管理用ライブラリ
 
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理システム", layout="wide")
 
-# --- 2. ログイン状態管理 (Cookie) ---
-@st.cache_resource
-def get_cookie_manager():
-    return stx.CookieManager()
-
-cookie_manager = get_cookie_manager()
-
+# --- 2. ログイン機能 ---
 def check_password():
-    # ブラウザのクッキーから「ログイン済み」の札を確認
-    if cookie_manager.get("is_logged_in") == "true":
-        return True
-
     def password_entered():
         if (
             st.session_state["username"] == st.secrets["auth"]["username"]
             and st.session_state["password"] == st.secrets["auth"]["password"]
         ):
-            # ログイン成功時、クッキーに保存（30日間有効）
-            cookie_manager.set("is_logged_in", "true", expires_at=datetime.now() + pd.Timedelta(days=30))
             st.session_state["password_correct"] = True
             del st.session_state["password"]
             del st.session_state["username"]
         else:
             st.session_state["password_correct"] = False
 
-    if "password_correct" not in st.session_state or not st.session_state["password_correct"]:
+    if "password_correct" not in st.session_state:
         st.title("🔐 設備管理システム ログイン")
         st.text_input("ユーザー名", key="username")
         st.text_input("パスワード", type="password", key="password")
         st.button("ログイン", on_click=password_entered)
-        if st.session_state.get("password_correct") == False:
-            st.error("😕 ユーザー名またはパスワードが違います")
+        return False
+    elif not st.session_state["password_correct"]:
+        st.title("🔐 設備管理システム ログイン")
+        st.text_input("ユーザー名", key="username")
+        st.text_input("パスワード", type="password", key="password")
+        st.button("ログイン", on_click=password_entered)
+        st.error("😕 ユーザー名またはパスワードが違います")
         return False
     return True
 
-# ログインチェック
 if not check_password():
     st.stop()
 
@@ -56,13 +47,11 @@ if not check_password():
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = "📁 過去履歴"
 
-# ログアウトボタン（クッキーも削除する）
 if st.sidebar.button("ログアウト"):
-    cookie_manager.delete("is_logged_in")
     st.session_state["password_correct"] = False
     st.rerun()
 
-# --- 4. データ読み込み (API負荷軽減版) ---
+# --- 4. データ読み込み (API負荷軽減) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
@@ -71,7 +60,7 @@ def load_data():
         stock = conn.read(worksheet="stock_data", ttl="1s")
         return df, stock
     except Exception as e:
-        st.error("Google Sheetsへのアクセス制限中です。しばらく待ってから更新してください。")
+        st.error("Google Sheetsへのアクセス制限中です。少し待ってから再読み込みしてください。")
         st.stop()
 
 df_raw, stock_df_raw = load_data()
@@ -106,7 +95,7 @@ def image_to_base64(uploaded_file):
         return base64.b64encode(buf.getvalue()).decode()
     return None
 
-# --- 7. メニュー選択 (タブ固定用) ---
+# --- 7. メニュー選択 ---
 tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 selected_tab = st.radio("メニュー", tab_titles, horizontal=True, label_visibility="collapsed", 
                         index=tab_titles.index(st.session_state.active_tab))
@@ -134,7 +123,7 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
 
 # ================================================================
-# 📁 1. 過去履歴 (画像2枚対応・修正・削除)
+# 📁 1. 過去履歴 (画像2枚対応)
 # ================================================================
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 メンテナンス過去履歴")
@@ -144,16 +133,19 @@ elif st.session_state.active_tab == "📁 過去履歴":
             with st.expander(f"{row['最終点検日'].strftime('%Y-%m-%d')} | {row['設備名']}"):
                 col_v1, col_v2 = st.columns([2, 1])
                 with col_v1:
-                    st.write(f"**内容:** {row['作業内容']}\n**備考:** {row['備考']}\n**費用:** {row['費用']:,} 円")
+                    st.write(f"**作業内容:** {row['作業内容']}\n**備考:** {row['備考']}\n**費用:** {row['費用']:,} 円")
                 with col_v2:
                     c_img1, c_img2 = st.columns(2)
-                    if len(str(row['画像'])) > 20: c_img1.image(base64.b64decode(row['画像']), caption="修理前", use_container_width=True)
-                    if len(str(row['画像2'])) > 20: c_img2.image(base64.b64decode(row['画像2']), caption="完成後", use_container_width=True)
+                    if len(str(row['画像'])) > 20:
+                        c_img1.image(base64.b64decode(row['画像']), caption="修理前", use_container_width=True)
+                    if len(str(row['画像2'])) > 20:
+                        c_img2.image(base64.b64decode(row['画像2']), caption="完成後", use_container_width=True)
+                    if len(str(row['画像'])) <= 20 and len(str(row['画像2'])) <= 20: st.info("写真なし")
         
         st.markdown("---")
         st.subheader("🛠️ 履歴の修正・削除")
         df['label'] = df['最終点検日'].dt.strftime('%Y-%m-%d') + " | " + df['設備名'].astype(str)
-        target_h = st.selectbox("修正対象を選択", df['label'].tolist(), key="h_fix_sel")
+        target_h = st.selectbox("対象の履歴を選択", df['label'].tolist(), key="h_fix_select")
         idx_h = df[df['label'] == target_h].index[0]
         curr_h = df.iloc[idx_h]
         
@@ -164,9 +156,10 @@ elif st.session_state.active_tab == "📁 過去履歴":
             new_cost = ca.number_input("費用", value=int(curr_h["費用"]))
             new_note = cb.text_area("備考", curr_h["備考"])
             new_desc = st.text_area("作業内容", curr_h["作業内容"])
+            st.write("📸 写真の更新")
             f_col1, f_col2 = st.columns(2)
-            up_f1 = f_col1.file_uploader("修理前を変更", type=['jpg','jpeg','png'])
-            up_f2 = f_col2.file_uploader("完成後を変更", type=['jpg','jpeg','png'])
+            up_f1 = f_col1.file_uploader("修理前を変更", type=['jpg','jpeg','png'], key="up_f1")
+            up_f2 = f_col2.file_uploader("完成後を変更", type=['jpg','jpeg','png'], key="up_f2")
             if st.form_submit_button("修正内容を保存"):
                 img_b1, img_b2 = image_to_base64(up_f1), image_to_base64(up_f2)
                 if img_b1: df.loc[idx_h, "画像"] = img_b1
@@ -180,25 +173,25 @@ elif st.session_state.active_tab == "📁 過去履歴":
             time.sleep(1); st.rerun()
 
 # ================================================================
-# 📦 2. 在庫管理 (新規登録・修正・削除)
+# 📦 2. 在庫管理 (全機能)
 # ================================================================
 elif st.session_state.active_tab == "📦 在庫管理":
     st.header("📦 部品在庫管理")
-    v_cat = st.selectbox("表示フィルタ", ["すべて"] + categories, key="stk_filter")
+    v_cat = st.selectbox("表示フィルタ", ["すべて"] + categories, key="stk_view_filter")
     d_stock = stock_df.copy()
     if v_cat != "すべて": d_stock = d_stock[d_stock["分類"] == v_cat]
     st.dataframe(d_stock, use_container_width=True)
 
     with st.expander("➕ 新しい部品を登録する"):
-        with st.form("new_stock_form"):
+        with st.form("new_stock_reg_form"):
             col_n1, col_n2 = st.columns(2)
-            n_cat = col_n1.selectbox("分類", categories)
+            n_cat = col_n1.selectbox("分類", categories, key="n_cat")
             n_name = col_n1.text_input("部品名")
             n_qty = col_n2.number_input("初期在庫数", min_value=0)
             n_price = col_n2.number_input("単価", min_value=0)
-            if st.form_submit_button("登録"):
-                new_r = pd.DataFrame([{"分類": n_cat, "部品名": n_name, "在庫数": n_qty, "単価": n_price, "発注点": 5, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
-                conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_r], ignore_index=True))
+            if st.form_submit_button("新しい部品を登録"):
+                new_row = pd.DataFrame([{"分類": n_cat, "部品名": n_name, "在庫数": n_qty, "単価": n_price, "発注点": 5, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
+                conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_row], ignore_index=True))
                 time.sleep(1); st.rerun()
 
     st.markdown("---")
@@ -211,7 +204,8 @@ elif st.session_state.active_tab == "📦 在庫管理":
         s_row = stock_df.loc[s_idx]
         with st.form("edit_stk_form"):
             c1, c2 = st.columns(2)
-            eq, ep = c1.number_input("在庫数", value=int(s_row["在庫数"])), c2.number_input("単価", value=int(s_row["単価"]))
+            eq = c1.number_input("在庫数", value=int(s_row["在庫数"]))
+            ep = c2.number_input("単価", value=int(s_row["単価"]))
             if st.form_submit_button("在庫情報を更新"):
                 stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
                 conn.update(worksheet="stock_data", data=stock_df)
@@ -227,13 +221,16 @@ elif st.session_state.active_tab == "📝 メンテナンス登録":
     st.header("📝 メンテナンス記録の入力")
     with st.form("main_reg_form", clear_on_submit=True):
         col_r1, col_r2 = st.columns(2)
-        en, ed = col_r1.selectbox("設備分類", categories), col_r1.text_input("機番・名称")
-        wt, wc = col_r2.date_input("作業日", datetime.today()), col_r2.number_input("費用", min_value=0)
+        en = col_r1.selectbox("設備分類", categories, key="reg_cat_sel")
+        ed = col_r1.text_input("機番・名称")
+        wt = col_r2.date_input("作業日", datetime.today())
+        wc = col_r2.number_input("費用", min_value=0)
         wd, wn = st.text_area("作業内容"), st.text_area("備考")
         st.write("📸 写真の追加")
-        u1, u2 = st.columns(2)
-        up1, up2 = u1.file_uploader("修理前", type=['jpg','jpeg','png']), u2.file_uploader("完成後", type=['jpg','jpeg','png'])
-        if st.form_submit_button("保存"):
+        u_col1, u_col2 = st.columns(2)
+        up1 = u_col1.file_uploader("修理前", type=['jpg','jpeg','png'], key="reg_up1")
+        up2 = u_col2.file_uploader("完成後", type=['jpg','jpeg','png'], key="reg_up2")
+        if st.form_submit_button("メンテナンス記録を保存"):
             img_b1, img_b2 = image_to_base64(up1), image_to_base64(up2)
             new_rec = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": img_b1 or "", "画像2": img_b2 or ""}])
             conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_rec], ignore_index=True))
