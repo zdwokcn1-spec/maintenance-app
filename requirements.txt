@@ -1,5 +1,9 @@
-extra-streamlit-components
-st-japanize-matplotlib
-streamlit-gsheets
+streamlit
+pandas
+matplotlib
+setuptools
+japanize-matplotlib
+st-gsheets-connection
+
 
 
