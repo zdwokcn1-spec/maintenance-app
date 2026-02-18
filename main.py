@@ -12,16 +12,46 @@ import time
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理システム", layout="wide")
 
-# --- 2. セッション管理 (タブ状態の維持) ---
+# --- 2. ログイン機能 ---
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    if st.session_state["password_correct"]:
+        return True
+
+    st.title("🔐 設備管理システム ログイン")
+    # スプレッドシート共有設定が「全員」でも、ここでブロックします
+    user = st.text_input("ユーザー名", key="login_user")
+    pw = st.text_input("パスワード", type="password", key="login_pw")
+    
+    if st.button("ログイン"):
+        if (user == st.secrets["auth"]["username"] and 
+            pw == st.secrets["auth"]["password"]):
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.error("😕 ユーザー名またはパスワードが違います")
+    return False
+
+if not check_password():
+    st.stop()
+
+# サイドバーにログアウトボタンを設置
+if st.sidebar.button("ログアウト"):
+    st.session_state["password_correct"] = False
+    st.rerun()
+
+# --- 3. セッション管理 (タブ状態の維持) ---
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = "📁 過去履歴"
 
-# --- 3. データ読み込み (API負荷軽減・エラー対策) ---
+# --- 4. データ読み込み (API負荷軽減・エラー対策) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # ttl=1sでアクセス制限(APIError)を回避
+        # ttl=1sでアクセス制限(APIError)を回避しつつ最新を取得
         df = conn.read(worksheet="maintenance_data", ttl="1s")
         stock = conn.read(worksheet="stock_data", ttl="1s")
         return df, stock
@@ -31,14 +61,14 @@ def load_data():
 
 df_raw, stock_df_raw = load_data()
 
-# --- 4. 列名の修復 (データ欠損防止) ---
+# --- 5. 列名の修復 (データ欠損防止) ---
 def fix_columns(df, target_cols):
     if df is None or df.empty: return pd.DataFrame(columns=target_cols)
     for col in target_cols:
         if col not in df.columns: df[col] = ""
     return df[target_cols]
 
-# 履歴データ用（画像2を追加）
+# 履歴データ用（画像・画像2を含む）
 m_cols = ['設備名', '最終点検日', '作業内容', '費用', '備考', '画像', '画像2']
 df = fix_columns(df_raw, m_cols)
 
@@ -46,7 +76,7 @@ df = fix_columns(df_raw, m_cols)
 s_cols = ['分類', '部品名', '在庫数', '単価', '発注点', '最終更新日']
 stock_df = fix_columns(stock_df_raw, s_cols)
 
-# --- 5. データクリーニング ---
+# --- 6. データクリーニング ---
 for col in ['画像', '画像2']:
     df[col] = df[col].fillna("").astype(str)
 df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce').fillna(pd.Timestamp(datetime.today()))
@@ -54,18 +84,18 @@ df['費用'] = pd.to_numeric(df['費用'], errors='coerce').fillna(0).astype(int
 stock_df['在庫数'] = pd.to_numeric(stock_df['在庫数'], errors='coerce').fillna(0).astype(int)
 stock_df['単価'] = pd.to_numeric(stock_df['単価'], errors='coerce').fillna(0).astype(int)
 
-# --- 6. 共通関数 (画像圧縮) ---
+# --- 7. 共通関数 (画像圧縮) ---
 def image_to_base64(uploaded_file):
     if uploaded_file:
         img = Image.open(uploaded_file)
-        img.thumbnail((400, 400)) # 400pxに圧縮
+        img.thumbnail((400, 400)) # 400pxに圧縮してデータ量を削減
         if img.mode != 'RGB': img = img.convert('RGB')
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=60, optimize=True)
         return base64.b64encode(buf.getvalue()).decode()
     return None
 
-# --- 7. メニュー選択 (タブ固定対策) ---
+# --- 8. メニュー選択 ---
 tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 selected_tab = st.radio("メニュー", tab_titles, horizontal=True, label_visibility="collapsed", 
                         index=tab_titles.index(st.session_state.active_tab))
@@ -84,16 +114,20 @@ if st.session_state.active_tab == "📊 ダッシュボード":
         with c1:
             st.subheader("💰 設備別・累計費用")
             cost_by_equip = df.groupby('大分類')['費用'].sum().sort_values(ascending=True)
-            fig1, ax1 = plt.subplots(); cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71'); st.pyplot(fig1)
+            fig1, ax1 = plt.subplots()
+            cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71')
+            st.pyplot(fig1)
         with c2:
             st.subheader("📈 月別費用推移")
             df_trend = df.copy()
             df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
             pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='費用', aggfunc='sum').fillna(0)
-            fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
+            fig2, ax2 = plt.subplots()
+            pivot_df.plot(kind='line', marker='o', ax=ax2)
+            st.pyplot(fig2)
 
 # ================================================================
-# 📁 1. 過去履歴 (詳細表示・修正・削除・画像2枚)
+# 📁 1. 過去履歴
 # ================================================================
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 メンテナンス過去履歴")
@@ -130,7 +164,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
             new_note = cb.text_area("備考", curr_h["備考"])
             new_desc = st.text_area("作業内容", curr_h["作業内容"])
             
-            st.write("📸 写真の更新 (変更する場合のみ)")
+            st.write("📸 写真の更新 (変更する場合のみ選択)")
             f_col1, f_col2 = st.columns(2)
             up_f1 = f_col1.file_uploader("修理前を変更", type=['jpg','jpeg','png'], key="up_f1")
             up_f2 = f_col2.file_uploader("完成後を変更", type=['jpg','jpeg','png'], key="up_f2")
@@ -142,25 +176,25 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 if img_b2: df.loc[idx_h, "画像2"] = img_b2
                 df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
                 conn.update(worksheet="maintenance_data", data=df.drop(columns=['label'], errors='ignore'))
+                st.success("修正を保存しました。")
                 time.sleep(1); st.rerun()
 
         if st.button("🚨 この履歴を完全に削除する", key="h_del_btn"):
             conn.update(worksheet="maintenance_data", data=df.drop(idx_h).drop(columns=['label'], errors='ignore'))
+            st.warning("履歴を削除しました。")
             time.sleep(1); st.rerun()
 
 # ================================================================
-# 📦 2. 在庫管理 (新規登録・表示・修正・削除 すべて収録)
+# 📦 2. 在庫管理
 # ================================================================
 elif st.session_state.active_tab == "📦 在庫管理":
     st.header("📦 部品在庫管理")
     
-    # --- 在庫一覧表示 ---
     v_cat = st.selectbox("表示フィルタ", ["すべて"] + categories, key="stk_view_filter")
     d_stock = stock_df.copy()
     if v_cat != "すべて": d_stock = d_stock[d_stock["分類"] == v_cat]
     st.dataframe(d_stock, use_container_width=True)
 
-    # --- 新規部品登録 ---
     with st.expander("➕ 新しい部品を登録する"):
         with st.form("new_stock_reg_form"):
             col_n1, col_n2 = st.columns(2)
@@ -171,6 +205,7 @@ elif st.session_state.active_tab == "📦 在庫管理":
             if st.form_submit_button("新しい部品を登録"):
                 new_row = pd.DataFrame([{"分類": n_cat, "部品名": n_name, "在庫数": n_qty, "単価": n_price, "発注点": 5, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
                 conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_row], ignore_index=True))
+                st.success("新部品を登録しました。")
                 time.sleep(1); st.rerun()
 
     st.markdown("---")
@@ -190,16 +225,16 @@ elif st.session_state.active_tab == "📦 在庫管理":
             if st.form_submit_button("在庫情報を更新"):
                 stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
                 conn.update(worksheet="stock_data", data=stock_df)
+                st.success("在庫を更新しました。")
                 time.sleep(1); st.rerun()
         
         if st.button(f"🗑️ {t_item} をデータから削除", key="stk_del_btn"):
             conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != t_item])
+            st.warning("部品を削除しました。")
             time.sleep(1); st.rerun()
-    else:
-        st.info("この分類には部品が登録されていません。")
 
 # ================================================================
-# 📝 3. メンテナンス登録 (画像2枚対応)
+# 📝 3. メンテナンス登録
 # ================================================================
 elif st.session_state.active_tab == "📝 メンテナンス登録":
     st.header("📝 メンテナンス記録の入力")
@@ -227,5 +262,8 @@ elif st.session_state.active_tab == "📝 メンテナンス登録":
                 "作業内容": wd, "費用": wc, "備考": wn, 
                 "画像": img_b1, "画像2": img_b2
             }])
-            conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_record], ignore_index=True))
+            # label列を削除してconcat（データ保存時にエラーを出さないため）
+            save_df = df.drop(columns=['label'], errors='ignore')
+            conn.update(worksheet="maintenance_data", data=pd.concat([save_df, new_record], ignore_index=True))
+            st.success("記録を保存しました！")
             time.sleep(1); st.rerun()
