@@ -12,10 +12,11 @@ import time
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理システム", layout="wide")
 
-# --- 2. 権限管理システム (F5対策込み) ---
+# --- 2. 権限管理システム (複数ユーザー & F5対策) ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
+# URLパラメータによるログイン維持
 if st.query_params.get("auth") == "success":
     st.session_state["logged_in"] = True
 
@@ -25,14 +26,19 @@ with st.sidebar:
         user = st.text_input("ユーザー名")
         pw = st.text_input("パスワード", type="password")
         if st.button("編集モードでログイン"):
-            if user == st.secrets["auth"]["username"] and pw == st.secrets["auth"]["password"]:
+            # 2組のID/PWのいずれかに一致するか確認
+            is_user1 = (user == st.secrets["auth"]["username"] and pw == st.secrets["auth"]["password"])
+            is_user2 = (user == st.secrets["auth_extra"]["username"] and pw == st.secrets["auth_extra"]["password"])
+            
+            if is_user1 or is_user2:
                 st.session_state["logged_in"] = True
                 st.query_params["auth"] = "success"
                 st.rerun()
             else:
-                st.error("認証失敗")
+                st.error("認証失敗: IDまたはパスワードが違います")
+        st.info("💡 ログインなし：閲覧のみ\n💡 ログインあり：編集・登録可能")
     else:
-        st.success("✅ 編集モード：有効")
+        st.success(f"✅ 編集モード：有効")
         if st.button("ログアウト"):
             st.session_state["logged_in"] = False
             st.query_params.clear()
@@ -47,7 +53,7 @@ def load_data():
         stock = conn.read(worksheet="stock_data", ttl="1s")
         return df, stock
     except:
-        st.error("Google Sheetsへのアクセス制限中です。しばらく待ってから再読み込みしてください。")
+        st.error("Google Sheetsへのアクセス制限中です。少し待ってから再読み込みしてください。")
         st.stop()
 
 df_raw, stock_df_raw = load_data()
@@ -81,38 +87,29 @@ def image_to_base64(uploaded_file):
         return base64.b64encode(buf.getvalue()).decode()
     return None
 
-# --- 6. 【重要】メニュー切り替えロジックの修正 ---
+# --- 6. メニュー切り替えロジック (1クリック対応) ---
 if st.session_state["logged_in"]:
     tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 else:
     tab_titles = ["📊 ダッシュボード", "📁 過去履歴"]
 
-# セッション状態に現在地がなければ初期化
 if "active_tab" not in st.session_state or st.session_state.active_tab not in tab_titles:
     st.session_state.active_tab = tab_titles[0]
 
-# メニューをクリックした時に即実行される関数
 def on_tab_change():
     st.session_state.active_tab = st.session_state.menu_radio
 
-# ラジオボタン：on_changeを設定して一回で切り替わるようにする
 selected_tab = st.radio(
-    "メニュー", 
-    tab_titles, 
-    horizontal=True, 
-    label_visibility="collapsed", 
-    key="menu_radio", # keyを設定
-    index=tab_titles.index(st.session_state.active_tab),
-    on_change=on_tab_change # クリックした瞬間に処理
+    "メニュー", tab_titles, horizontal=True, label_visibility="collapsed", 
+    key="menu_radio", index=tab_titles.index(st.session_state.active_tab),
+    on_change=on_tab_change
 )
 
 categories = ["ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
 
 # ================================================================
-# 各画面の表示ロジック (st.session_state.active_tab で判定)
-# ================================================================
-
 # 📊 0. ダッシュボード
+# ================================================================
 if st.session_state.active_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス状況概況")
     if not df.empty:
@@ -128,7 +125,9 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='費用', aggfunc='sum').fillna(0)
             fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
 
-# 📁 1. 過去履歴
+# ================================================================
+# 📁 1. 過去履歴 (修理前・修理後)
+# ================================================================
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 メンテナンス過去履歴")
     if not df.empty:
@@ -170,7 +169,9 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 conn.update(worksheet="maintenance_data", data=df.drop(idx_h).drop(columns=['label'], errors='ignore'))
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# 📦 2. 在庫管理
+# ================================================================
+# 📦 2. 在庫管理 (修正・削除機能付き)
+# ================================================================
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 部品在庫管理")
     v_cat = st.selectbox("表示フィルタ", ["すべて"] + categories)
@@ -203,7 +204,9 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
         if st.button(f"🗑️ {t_item} を削除"):
             conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != t_item]); st.warning("削除完了"); time.sleep(1); st.rerun()
 
+# ================================================================
 # 📝 3. メンテナンス登録
+# ================================================================
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 メンテナンス記録の入力")
     with st.form("main_reg", clear_on_submit=True):
