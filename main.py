@@ -25,12 +25,13 @@ with st.sidebar:
     if not st.session_state["logged_in"]:
         user = st.text_input("ユーザー名")
         pw = st.text_input("パスワード", type="password")
-        if st.button("編集モードでログイン"):
-            # 2組のID/PWのいずれかに一致するか確認
+if st.button("編集モードでログイン"):
+            # 3組のID/PWのいずれかに一致するか確認
             is_user1 = (user == st.secrets["auth"]["username"] and pw == st.secrets["auth"]["password"])
             is_user2 = (user == st.secrets["auth_extra"]["username"] and pw == st.secrets["auth_extra"]["password"])
+            is_user3 = (user == st.secrets["auth_3"]["username"] and pw == st.secrets["auth_3"]["password"]) # 追加
             
-            if is_user1 or is_user2:
+            if is_user1 or is_user2 or is_user3: # is_user3 を追加
                 st.session_state["logged_in"] = True
                 st.query_params["auth"] = "success"
                 st.rerun()
@@ -220,3 +221,4 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
             new_record = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
             conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_record], ignore_index=True))
             st.success("保存完了！"); time.sleep(1); st.rerun()
+
