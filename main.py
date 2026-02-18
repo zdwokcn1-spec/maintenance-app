@@ -12,11 +12,10 @@ import time
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理システム", layout="wide")
 
-# --- 2. 権限管理システム (複数ユーザー & F5対策) ---
+# --- 2. 権限管理システム (3人対応 & F5対策) ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
-# URLパラメータによるログイン維持
 if st.query_params.get("auth") == "success":
     st.session_state["logged_in"] = True
 
@@ -25,21 +24,21 @@ with st.sidebar:
     if not st.session_state["logged_in"]:
         user = st.text_input("ユーザー名")
         pw = st.text_input("パスワード", type="password")
-if st.button("編集モードでログイン"):
-            # 3組のID/PWのいずれかに一致するか確認
-            is_user1 = (user == st.secrets["auth"]["username"] and pw == st.secrets["auth"]["password"])
-            is_user2 = (user == st.secrets["auth_extra"]["username"] and pw == st.secrets["auth_extra"]["password"])
-            is_user3 = (user == st.secrets["auth_3"]["username"] and pw == st.secrets["auth_3"]["password"]) # 追加
+        if st.button("編集モードでログイン"):
+            # 3組のID/PWチェック
+            is_u1 = (user == st.secrets["auth"]["username"] and pw == st.secrets["auth"]["password"])
+            is_u2 = (user == st.secrets["auth_extra"]["username"] and pw == st.secrets["auth_extra"]["password"])
+            is_u3 = (user == st.secrets["auth_3"]["username"] and pw == st.secrets["auth_3"]["password"])
             
-            if is_user1 or is_user2 or is_user3: # is_user3 を追加
+            if is_u1 or is_u2 or is_u3:
                 st.session_state["logged_in"] = True
                 st.query_params["auth"] = "success"
                 st.rerun()
             else:
-                st.error("認証失敗: IDまたはパスワードが違います")
-        st.info("💡 ログインなし：閲覧のみ\n💡 ログインあり：編集・登録可能")
+                st.error("認証失敗")
+        st.info("💡 ログインなし：閲覧のみ\n💡 ログインあり：編集可能")
     else:
-        st.success(f"✅ 編集モード：有効")
+        st.success("✅ 編集モード：有効")
         if st.button("ログアウト"):
             st.session_state["logged_in"] = False
             st.query_params.clear()
@@ -54,7 +53,7 @@ def load_data():
         stock = conn.read(worksheet="stock_data", ttl="1s")
         return df, stock
     except:
-        st.error("Google Sheetsへのアクセス制限中です。少し待ってから再読み込みしてください。")
+        st.error("データ読み込み制限中...")
         st.stop()
 
 df_raw, stock_df_raw = load_data()
@@ -88,7 +87,7 @@ def image_to_base64(uploaded_file):
         return base64.b64encode(buf.getvalue()).decode()
     return None
 
-# --- 6. メニュー切り替えロジック (1クリック対応) ---
+# --- 6. メニュー切り替え ---
 if st.session_state["logged_in"]:
     tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 else:
@@ -136,7 +135,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
         for i, row in sorted_df.iterrows():
             with st.expander(f"{row['最終点検日'].strftime('%Y-%m-%d')} | {row['設備名']}"):
                 v1, v2 = st.columns([2, 1])
-                v1.write(f"**作業内容:** {row['作業内容']}\n\n**備考:** {row['備考']}\n\n**費用:** {row['費用']:,} 円")
+                v1.write(f"**内容:** {row['作業内容']}\n\n**備考:** {row['備考']}\n\n**費用:** {row['費用']:,} 円")
                 with v2:
                     i1, i2 = st.columns(2)
                     if len(str(row['画像'])) > 20: i1.image(base64.b64decode(row['画像']), caption="修理前")
@@ -171,7 +170,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
 # ================================================================
-# 📦 2. 在庫管理 (修正・削除機能付き)
+# 📦 2. 在庫管理
 # ================================================================
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 部品在庫管理")
@@ -180,7 +179,7 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
     if v_cat != "すべて": d_stock = d_stock[d_stock["分類"] == v_cat]
     st.dataframe(d_stock, use_container_width=True)
 
-    with st.expander("➕ 新しい部品を登録する"):
+    with st.expander("➕ 新規部品登録"):
         with st.form("new_stock"):
             n_cat, n_name = st.selectbox("分類", categories), st.text_input("部品名")
             n_qty, n_price = st.number_input("在庫数", 0), st.number_input("単価", 0)
@@ -221,4 +220,3 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
             new_record = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
             conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_record], ignore_index=True))
             st.success("保存完了！"); time.sleep(1); st.rerun()
-
