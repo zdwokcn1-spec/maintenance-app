@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator, FuncFormatter
+from matplotlib.ticker import MultipleLocator, FuncFormatter
 import japanize_matplotlib
 from streamlit_gsheets import GSheetsConnection
 import base64
@@ -130,9 +130,10 @@ if st.session_state.active_tab == "📊 ダッシュボード":
                 fig2, ax2 = plt.subplots()
                 ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2, zorder=3)
                 
-                # --- ここを修正：回数の目盛りを「整数」かつ「◯回」に変更 ---
-                ax2.yaxis.set_major_locator(MaxNLocator(integer=True)) # 整数のみ
-                ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{int(x)}回')) # ◯回と表示
+                # --- 縦軸の設定：最小値0、単位1、整数のみ ---
+                ax2.set_ylim(bottom=0) # 最小値を0に固定
+                ax2.yaxis.set_major_locator(MultipleLocator(1)) # 刻み単位を強制的に「1」にする
+                ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{int(x)}回')) # 整数+「回」
                 
                 plt.xticks(rotation=45)
                 ax2.grid(linestyle='--', alpha=0.7)
@@ -143,7 +144,7 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             m1.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
             m2.metric("期間内メンテ回数", f"{len(f_df)} 回")
 
-# --- 以降、履歴・在庫・登録のコード（削除・修正機能含む） ---
+# --- 📁 1. 過去履歴 ---
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 履歴表示・編集・削除")
     if not df.empty:
@@ -178,6 +179,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 conn.update(worksheet="maintenance_data", data=df.drop(idx).drop(columns=['label']))
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
+# --- 📦 2. 在庫管理 ---
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 在庫管理・修正・削除")
     st.dataframe(stock_df, use_container_width=True)
@@ -205,6 +207,7 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
             conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != target_s])
             st.warning("削除完了"); time.sleep(1); st.rerun()
 
+# --- 📝 3. 登録 ---
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 記録入力")
     with st.form("reg", clear_on_submit=True):
