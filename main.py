@@ -115,12 +115,10 @@ if st.session_state.active_tab == "📊 ダッシュボード":
                 m_cost = f_df.groupby('年月')['費用'].sum().sort_index()
                 fig1, ax1 = plt.subplots()
                 bars = m_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
-                # 棒の上に金額を表示
                 for bar in bars.patches:
                     ax1.annotate(f'{int(bar.get_height()):,}', 
                                  (bar.get_x() + bar.get_width() / 2, bar.get_height()),
                                  ha='center', va='bottom', fontsize=9)
-                # 軸にカンマを入れる
                 ax1.yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
                 plt.xticks(rotation=45)
                 ax1.grid(axis='y', linestyle='--', alpha=0.7)
@@ -131,18 +129,21 @@ if st.session_state.active_tab == "📊 ダッシュボード":
                 e_counts = f_df['大分類'].value_counts().sort_index()
                 fig2, ax2 = plt.subplots()
                 ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2, zorder=3)
-                # 縦軸を整数のみに強制固定
-                ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
+                
+                # --- ここを修正：回数の目盛りを「整数」かつ「◯回」に変更 ---
+                ax2.yaxis.set_major_locator(MaxNLocator(integer=True)) # 整数のみ
+                ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{int(x)}回')) # ◯回と表示
+                
                 plt.xticks(rotation=45)
                 ax2.grid(linestyle='--', alpha=0.7)
                 st.pyplot(fig2)
             
             st.markdown("---")
             m1, m2 = st.columns(2)
-            m1.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,}")
-            m2.metric("期間内メンテ回数", f"{len(f_df)}")
+            m1.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
+            m2.metric("期間内メンテ回数", f"{len(f_df)} 回")
 
-# --- 📁 1. 過去履歴 ---
+# --- 以降、履歴・在庫・登録のコード（削除・修正機能含む） ---
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 履歴表示・編集・削除")
     if not df.empty:
@@ -177,7 +178,6 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 conn.update(worksheet="maintenance_data", data=df.drop(idx).drop(columns=['label']))
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# --- 📦 2. 在庫管理 ---
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 在庫管理・修正・削除")
     st.dataframe(stock_df, use_container_width=True)
@@ -205,7 +205,6 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
             conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != target_s])
             st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# --- 📝 3. 登録 ---
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 記録入力")
     with st.form("reg", clear_on_submit=True):
@@ -217,7 +216,6 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
         if st.form_submit_button("保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
             new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
-            # 元のdf_rawに連結して保存
             updated_df = pd.concat([df_raw, new_r], ignore_index=True)
             conn.update(worksheet="maintenance_data", data=updated_df)
             st.success("完了"); time.sleep(1); st.rerun()
