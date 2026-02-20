@@ -13,7 +13,7 @@ import time
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理システム", layout="wide")
 
-# --- 2. 権限管理システム ---
+# --- 2. 権限管理システム (3人対応) ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
@@ -93,9 +93,11 @@ def on_tab_change(): st.session_state.active_tab = st.session_state.menu_radio
 selected_tab = st.radio("メニュー", tab_titles, horizontal=True, label_visibility="collapsed", key="menu_radio", index=tab_titles.index(st.session_state.active_tab), on_change=on_tab_change)
 categories = ["ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
 
-# --- 📊 0. ダッシュボード ---
+# ================================================================
+# 📊 0. ダッシュボード
+# ================================================================
 if st.session_state.active_tab == "📊 ダッシュボード":
-    st.header("📊 メンテナンス集計")
+    st.header("📊 メンテナンス集計分析")
     if not df.empty:
         st.subheader("📅 集計期間指定")
         col_d1, col_d2 = st.columns(2)
@@ -113,16 +115,11 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             with c1:
                 st.subheader("💰 月別費用 (縦棒)")
                 m_cost = f_df.groupby('年月')['費用'].sum().sort_index()
-                fig1, ax1 = plt.subplots()
-                bars = m_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
+                fig1, ax1 = plt.subplots(); bars = m_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
                 for bar in bars.patches:
-                    ax1.annotate(f'{int(bar.get_height()):,}', 
-                                 (bar.get_x() + bar.get_width() / 2, bar.get_height()),
-                                 ha='center', va='bottom', fontsize=9)
+                    ax1.annotate(f'{int(bar.get_height()):,}', (bar.get_x() + bar.get_width() / 2, bar.get_height()), ha='center', va='bottom', fontsize=9)
                 ax1.yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
-                plt.xticks(rotation=45)
-                ax1.grid(axis='y', linestyle='--', alpha=0.7)
-                st.pyplot(fig1)
+                plt.xticks(rotation=45); ax1.grid(axis='y', linestyle='--', alpha=0.7); st.pyplot(fig1)
 
             with c2:
                 st.subheader("📈 設備別回数 (折れ線)")
@@ -130,21 +127,25 @@ if st.session_state.active_tab == "📊 ダッシュボード":
                 fig2, ax2 = plt.subplots()
                 ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2, zorder=3)
                 
-                # --- 縦軸の設定：最小値0、単位1、整数のみ ---
-                ax2.set_ylim(bottom=0) # 最小値を0に固定
-                ax2.yaxis.set_major_locator(MultipleLocator(1)) # 刻み単位を強制的に「1」にする
-                ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{int(x)}回')) # 整数+「回」
+                # 動的な最大値設定
+                max_val = e_counts.max() if not e_counts.empty else 0
+                upper_limit = 5 if max_val < 5 else int(max_val * 1.2) + 1
                 
-                plt.xticks(rotation=45)
-                ax2.grid(linestyle='--', alpha=0.7)
-                st.pyplot(fig2)
+                ax2.set_ylim(bottom=0, top=upper_limit)
+                ax2.yaxis.set_major_locator(MultipleLocator(1))
+                ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{int(x)}回'))
+                plt.xticks(rotation=45); ax2.grid(linestyle='--', alpha=0.7); st.pyplot(fig2)
             
             st.markdown("---")
             m1, m2 = st.columns(2)
             m1.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
             m2.metric("期間内メンテ回数", f"{len(f_df)} 回")
+        else:
+            st.warning("選択された期間にデータがありません。")
 
-# --- 📁 1. 過去履歴 ---
+# ================================================================
+# 📁 1. 過去履歴 (修正・削除)
+# ================================================================
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 履歴表示・編集・削除")
     if not df.empty:
@@ -179,7 +180,9 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 conn.update(worksheet="maintenance_data", data=df.drop(idx).drop(columns=['label']))
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# --- 📦 2. 在庫管理 ---
+# ================================================================
+# 📦 2. 在庫管理 (修正・削除)
+# ================================================================
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 在庫管理・修正・削除")
     st.dataframe(stock_df, use_container_width=True)
@@ -207,15 +210,17 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
             conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != target_s])
             st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# --- 📝 3. 登録 ---
+# ================================================================
+# 📝 3. メンテナンス登録
+# ================================================================
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 記録入力")
     with st.form("reg", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        en, ed = c1.selectbox("分類", categories), c1.text_input("名称")
+        en, ed = c1.selectbox("分類", categories), c1.text_input("機番・名称")
         wt, wc = c2.date_input("作業日", date.today()), c2.number_input("費用", 0)
         wd, wn = st.text_area("内容"), st.text_area("備考")
-        up1, up2 = st.file_uploader("修理前写真", type=['jpg','png']), st.file_uploader("修理後写真", type=['jpg','png'])
+        up1, up2 = st.file_uploader("修理前", type=['jpg','png']), st.file_uploader("修理後", type=['jpg','png'])
         if st.form_submit_button("保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
             new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
