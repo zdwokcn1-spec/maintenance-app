@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import japanize_matplotlib
 from streamlit_gsheets import GSheetsConnection
 import base64
@@ -107,6 +108,7 @@ if st.session_state.active_tab == "📊 ダッシュボード":
         if not f_df.empty:
             f_df['大分類'] = f_df['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
             f_df['年月'] = f_df['最終点検日'].dt.strftime('%Y-%m')
+            
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("💰 月別費用 (縦棒)")
@@ -116,10 +118,17 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             with c2:
                 st.subheader("📈 設備別回数 (折れ線)")
                 e_counts = f_df['大分類'].value_counts().sort_index()
-                fig2, ax2 = plt.subplots(); ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2)
+                fig2, ax2 = plt.subplots(); 
+                ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2)
+                # 縦軸の目盛りを整数のみにする(小数点を消す)
+                ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
                 plt.xticks(rotation=45); ax2.grid(linestyle='--'); st.pyplot(fig2)
+            
             st.markdown("---")
-            m1, m2 = st.columns(2); m1.metric("期間内合計費用", f"{f_df['費用'].sum():,} 円"); m2.metric("期間内メンテ回数", f"{len(f_df)} 回")
+            m1, m2 = st.columns(2)
+            # 金額にカンマを入れる
+            m1.metric("期間内合計費用", f"{f_df['費用'].sum():,} 円")
+            m2.metric("期間内メンテ回数", f"{len(f_df)} 回")
 
 # --- 📁 1. 過去履歴 ---
 elif st.session_state.active_tab == "📁 過去履歴":
@@ -170,17 +179,19 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
                 st.success("登録完了"); time.sleep(1); st.rerun()
     st.markdown("---")
     st.subheader("🛠️ 在庫の修正・削除")
-    target_s = st.selectbox("部品を選択", stock_df["部品名"].tolist())
-    s_idx = stock_df[stock_df["部品名"] == target_s].index[0]
-    with st.form("e_s"):
-        u_q = st.number_input("在庫数", value=int(stock_df.loc[s_idx, "在庫数"]))
-        u_p = st.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]))
-        if st.form_submit_button("在庫更新"):
-            stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [u_q, u_p, date.today().strftime('%Y-%m-%d')]
-            conn.update(worksheet="stock_data", data=stock_df); st.success("更新完了"); time.sleep(1); st.rerun()
-    if st.button(f"🗑️ {target_s} を削除"):
-        conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != target_s])
-        st.warning("削除完了"); time.sleep(1); st.rerun()
+    if not stock_df.empty:
+        target_s = st.selectbox("部品を選択", stock_df["部品名"].tolist())
+        s_idx = stock_df[stock_df["部品名"] == target_s].index[0]
+        with st.form("e_s"):
+            u_q = st.number_input("在庫数", value=int(stock_df.loc[s_idx, "在庫数"]))
+            u_p = st.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]))
+            if st.form_submit_button("在庫更新"):
+                stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [u_q, u_p, date.today().strftime('%Y-%m-%d')]
+                conn.update(worksheet="stock_data", data=stock_df)
+                st.success("更新完了"); time.sleep(1); st.rerun()
+        if st.button(f"🗑️ {target_s} を削除"):
+            conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != target_s])
+            st.warning("削除完了"); time.sleep(1); st.rerun()
 
 # --- 📝 3. 登録 ---
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
@@ -190,9 +201,9 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
         en, ed = c1.selectbox("分類", categories), c1.text_input("名称")
         wt, wc = c2.date_input("作業日", date.today()), c2.number_input("費用", 0)
         wd, wn = st.text_area("内容"), st.text_area("備考")
-        up1, up2 = st.file_uploader("前", type=['jpg','png']), st.file_uploader("後", type=['jpg','png'])
+        up1, up2 = st.file_uploader("修理前写真", type=['jpg','png']), st.file_uploader("修理後写真", type=['jpg','png'])
         if st.form_submit_button("保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
             new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
-            conn.update(worksheet="maintenance_data", data=pd.concat([df, new_r], ignore_index=True))
+            conn.update(worksheet="maintenance_data", data=pd.concat([df_raw, new_r], ignore_index=True))
             st.success("完了"); time.sleep(1); st.rerun()
