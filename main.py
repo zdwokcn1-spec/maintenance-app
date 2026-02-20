@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, FuncFormatter
 import japanize_matplotlib
 from streamlit_gsheets import GSheetsConnection
 import base64
@@ -113,22 +113,34 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             with c1:
                 st.subheader("💰 月別費用 (縦棒)")
                 m_cost = f_df.groupby('年月')['費用'].sum().sort_index()
-                fig1, ax1 = plt.subplots(); m_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
-                plt.xticks(rotation=45); ax1.grid(axis='y', linestyle='--'); st.pyplot(fig1)
+                fig1, ax1 = plt.subplots()
+                bars = m_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
+                # 棒の上に金額を表示
+                for bar in bars.patches:
+                    ax1.annotate(f'{int(bar.get_height()):,}', 
+                                 (bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                                 ha='center', va='bottom', fontsize=9)
+                # 軸にカンマを入れる
+                ax1.yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
+                plt.xticks(rotation=45)
+                ax1.grid(axis='y', linestyle='--', alpha=0.7)
+                st.pyplot(fig1)
+
             with c2:
                 st.subheader("📈 設備別回数 (折れ線)")
                 e_counts = f_df['大分類'].value_counts().sort_index()
-                fig2, ax2 = plt.subplots(); 
-                ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2)
-                # 縦軸の目盛りを整数のみにする(小数点を消す)
+                fig2, ax2 = plt.subplots()
+                ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22', linewidth=2, zorder=3)
+                # 縦軸を整数のみに強制固定
                 ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
-                plt.xticks(rotation=45); ax2.grid(linestyle='--'); st.pyplot(fig2)
+                plt.xticks(rotation=45)
+                ax2.grid(linestyle='--', alpha=0.7)
+                st.pyplot(fig2)
             
             st.markdown("---")
             m1, m2 = st.columns(2)
-            # 金額にカンマを入れる
-            m1.metric("期間内合計費用", f"{f_df['費用'].sum():,} 円")
-            m2.metric("期間内メンテ回数", f"{len(f_df)} 回")
+            m1.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,}")
+            m2.metric("期間内メンテ回数", f"{len(f_df)}")
 
 # --- 📁 1. 過去履歴 ---
 elif st.session_state.active_tab == "📁 過去履歴":
@@ -205,5 +217,7 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
         if st.form_submit_button("保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
             new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
-            conn.update(worksheet="maintenance_data", data=pd.concat([df_raw, new_r], ignore_index=True))
+            # 元のdf_rawに連結して保存
+            updated_df = pd.concat([df_raw, new_r], ignore_index=True)
+            conn.update(worksheet="maintenance_data", data=updated_df)
             st.success("完了"); time.sleep(1); st.rerun()
