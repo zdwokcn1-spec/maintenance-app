@@ -35,8 +35,8 @@ with st.sidebar:
                 st.query_params["auth"] = "success"
                 st.rerun()
             else:
-                st.error("認証失敗")
-        st.info("💡 ログインなし：閲覧のみ\n💡 ログインあり：編集可能")
+                st.error("認証失敗: IDまたはパスワードが違います")
+        st.info("💡 ログインなし：閲覧のみ\n💡 ログインあり：編集・登録可能")
     else:
         st.success("✅ 編集モード：有効")
         if st.button("ログアウト"):
@@ -53,7 +53,7 @@ def load_data():
         stock = conn.read(worksheet="stock_data", ttl="1s")
         return df, stock
     except:
-        st.error("データ読み込み制限中...")
+        st.error("Google Sheetsへのアクセス制限中です。しばらく待ってから再読み込みしてください。")
         st.stop()
 
 df_raw, stock_df_raw = load_data()
@@ -87,7 +87,7 @@ def image_to_base64(uploaded_file):
         return base64.b64encode(buf.getvalue()).decode()
     return None
 
-# --- 6. メニュー切り替え ---
+# --- 6. メニュー切り替えロジック (1クリック対応) ---
 if st.session_state["logged_in"]:
     tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 else:
@@ -108,22 +108,42 @@ selected_tab = st.radio(
 categories = ["ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
 
 # ================================================================
-# 📊 0. ダッシュボード
+# 📊 0. ダッシュボード (新・分析機能版)
 # ================================================================
 if st.session_state.active_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス状況概況")
     if not df.empty:
+        # データ準備
         df['大分類'] = df['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
+        df['年月'] = df['最終点検日'].dt.strftime('%Y-%m')
+        
         c1, c2 = st.columns(2)
+        
         with c1:
-            st.subheader("💰 設備別・累計費用")
-            cost_by_equip = df.groupby('大分類')['費用'].sum().sort_values(ascending=True)
-            fig1, ax1 = plt.subplots(); cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71'); st.pyplot(fig1)
+            st.subheader("💰 月別・メンテナンス費用合計")
+            monthly_cost = df.groupby('年月')['費用'].sum().sort_index()
+            fig1, ax1 = plt.subplots()
+            monthly_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
+            ax1.set_ylabel("費用 (円)")
+            plt.xticks(rotation=45)
+            ax1.grid(axis='y', linestyle='--', alpha=0.7)
+            st.pyplot(fig1)
+
         with c2:
-            st.subheader("📈 月別費用推移")
-            df_trend = df.copy(); df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
-            pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='費用', aggfunc='sum').fillna(0)
-            fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
+            st.subheader("🛠️ 設備別・メンテナンス回数")
+            equip_counts = df['大分類'].value_counts().sort_values(ascending=True)
+            fig2, ax2 = plt.subplots()
+            equip_counts.plot(kind='bar', ax=ax2, color='#e67e22', zorder=3)
+            ax2.set_ylabel("修理・メンテ回数")
+            plt.xticks(rotation=45)
+            ax2.grid(axis='y', linestyle='--', alpha=0.7)
+            st.pyplot(fig2)
+            
+        st.markdown("---")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("累計メンテナンス費用", f"{df['費用'].sum():,} 円")
+        m2.metric("総メンテナンス回数", f"{len(df)} 回")
+        m3.metric("登録設備カテゴリ数", f"{len(df['大分類'].unique())}")
 
 # ================================================================
 # 📁 1. 過去履歴 (修理前・修理後)
@@ -135,7 +155,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
         for i, row in sorted_df.iterrows():
             with st.expander(f"{row['最終点検日'].strftime('%Y-%m-%d')} | {row['設備名']}"):
                 v1, v2 = st.columns([2, 1])
-                v1.write(f"**内容:** {row['作業内容']}\n\n**備考:** {row['備考']}\n\n**費用:** {row['費用']:,} 円")
+                v1.write(f"**作業内容:** {row['作業内容']}\n\n**備考:** {row['備考']}\n\n**費用:** {row['費用']:,} 円")
                 with v2:
                     i1, i2 = st.columns(2)
                     if len(str(row['画像'])) > 20: i1.image(base64.b64decode(row['画像']), caption="修理前")
@@ -170,7 +190,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
 # ================================================================
-# 📦 2. 在庫管理
+# 📦 2. 在庫管理 (修正・削除機能付き)
 # ================================================================
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 部品在庫管理")
@@ -179,7 +199,7 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
     if v_cat != "すべて": d_stock = d_stock[d_stock["分類"] == v_cat]
     st.dataframe(d_stock, use_container_width=True)
 
-    with st.expander("➕ 新規部品登録"):
+    with st.expander("➕ 新しい部品を登録する"):
         with st.form("new_stock"):
             n_cat, n_name = st.selectbox("分類", categories), st.text_input("部品名")
             n_qty, n_price = st.number_input("在庫数", 0), st.number_input("単価", 0)
