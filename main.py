@@ -142,10 +142,11 @@ elif st.session_state.active_tab == "📁 過去履歴":
     if not df.empty:
         s_df = df.sort_values(by="最終点検日", ascending=False, na_position='last')
         for i, row in s_df.iterrows():
-            # 【修正点】「日付未設定」を「作業日未設定」に変更
-            dt_display = row['最終点検日'].strftime('%Y-%m-%d') if pd.notnull(row['最終点検日']) else "作業日未設定"
+            # 【重要修正】日付を「作業日: YYYY-MM-DD」形式で取得。空なら「日付なし」
+            dt_label = row['最終点検日'].strftime('%Y-%m-%d') if pd.notnull(row['最終点検日']) else "日付なし"
             
-            with st.expander(f"{dt_display} | {row['設備名']}"):
+            # 見出しに日付を直接表示
+            with st.expander(f"作業日: {dt_label} | {row['設備名']}"):
                 v1, v2 = st.columns([2, 1])
                 v1.write(f"**内容:** {row['作業内容']}\n\n**費用:** {row['費用']:,} 円\n\n**備考:** {row['備考']}")
                 with v2:
@@ -156,8 +157,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
         if st.session_state["logged_in"]:
             st.markdown("---")
             st.subheader("🛠️ 履歴の修正・削除")
-            # ラベルも統一
-            df['label'] = df['最終点検日'].dt.strftime('%Y-%m-%d').fillna("作業日未設定") + " | " + df['設備名'].astype(str)
+            df['label'] = df['最終点検日'].dt.strftime('%Y-%m-%d').fillna("日付なし") + " | " + df['設備名'].astype(str)
             target = st.selectbox("修正対象を選択", df['label'].tolist())
             idx = df[df['label'] == target].index[0]
             with st.form("edit_h"):
