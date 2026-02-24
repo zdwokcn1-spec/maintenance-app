@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator, FuncFormatter
 import japanize_matplotlib
 from streamlit_gsheets import GSheetsConnection
 import base64
@@ -44,21 +43,19 @@ def load_data():
 df_raw, stock_df_raw = load_data()
 
 # --- 4. データ整形 ---
-m_cols = ['設備 name', '最終点検日', '作業内容', '費用', '備考', '画像', '画像2'] # 列名はシートに合わせる
-# シートの列名を補正
+m_cols = ['設備名', '最終点検日', '作業内容', '費用', '備考', '画像', '画像2']
 df = df_raw.copy()
-# 確実に必要な列が存在するようにする
-for col in ['設備名', '最終点検日', '作業内容', '費用', '備考', '画像', '画像2']:
+for col in m_cols:
     if col not in df.columns: df[col] = ""
 
-# エラー対策：画像列と日付列の文字列化
+# 画像と日付の文字列化（エラー回避）
 df['画像'] = df['画像'].fillna("").astype(str)
 df['画像2'] = df['画像2'].fillna("").astype(str)
 df['最終点検日'] = df['最終点検日'].fillna("").astype(str)
+df['費用'] = pd.to_numeric(df['費用'], errors='coerce').fillna(0).astype(int)
 
-# ★【最重要】表示・ソート用に日付型へ変換した作業列を作成
+# 並び替え用の日付列を作成
 df['sort_date'] = pd.to_datetime(df['最終点検日'], errors='coerce')
-# 日付が壊れているものは非常に古い日付にして最後に回す
 df['sort_date'] = df['sort_date'].fillna(pd.Timestamp('1900-01-01'))
 
 # 在庫データの整形
@@ -89,29 +86,41 @@ categories = ["ジョークラッシャ", "インパクトクラッシャー", "
 # ================================================================
 if selected_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス集計分析")
-    # ... (前回のグラフコードを維持)
-    f_df = df[df['sort_date'] > '1900-01-01'].copy()
-    if not f_df.empty:
-        f_df['年月'] = f_df['sort_date'].dt.strftime('%Y-%m')
-        st.subheader("💰 月別費用")
-        st.bar_chart(f_df.groupby('年月')['費用'].sum())
-        st.subheader("📈 設備別回数（折れ線）")
-        st.line_chart(f_df['設備名'].value_counts())
+    valid_df = df.dropna(subset=['temp_date'])
+    if not valid_df.empty:
+        st.subheader("📅 集計期間指定")
+        col_d1, col_d2 = st.columns(2)
+        start_date = col_d1.date_input("開始日", valid_df['temp_date'].min().date())
+        end_date = col_d2.date_input("終了日", valid_df['temp_date'].max().date())
+        mask = (df['temp_date'].dt.date >= start_date) & (df['temp_date'].dt.date <= end_date)
+        f_df = df.loc[mask].copy()
+        if not f_df.empty:
+            f_df['年月'] = f_df['temp_date'].dt.strftime('%Y-%m')
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("💰 月別費用")
+                m_cost = f_df.groupby('年月')['費用'].sum()
+                st.bar_chart(m_cost)
+            with c2:
+                st.subheader("📈 設備別回数（折れ線）")
+                e_counts = f_df['設備名'].value_counts()
+                st.line_chart(e_counts)
+            st.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
 
 # ================================================================
-# 📁 1. 過去履歴（新しい順に並び替え）
+# 📁 1. 過去履歴（新しい順表示 ＆ 修正・削除）
 # ================================================================
 elif selected_tab == "📁 過去履歴":
     st.header("📁 履歴表示（新しい順）")
     if not df.empty:
-        # ★ここで新しい順にソートして表示
+        # 新しい順に並び替え
         display_df = df.sort_values(by="sort_date", ascending=False)
         
         for i, row in display_df.iterrows():
             d_label = row['最終点検日'] if row['最終点検日'] != "" else "日付未設定"
             with st.expander(f"{d_label} | {row['設備名']}"):
                 c1, c2 = st.columns([2, 1])
-                c1.write(f"**内容:** {row['作業内容']}\n**費用:** {int(float(row['費用'] or 0)):,} 円\n**備考:** {row['備考']}")
+                c1.write(f"**内容:** {row['作業内容']}\n**費用:** {row['費用']:,} 円\n**備考:** {row['備考']}")
                 with c2:
                     if len(row['画像']) > 20: st.image(base64.b64decode(row['画像']), caption="修理前")
                     if len(row['画像2']) > 20: st.image(base64.b64decode(row['画像2']), caption="修理後")
@@ -119,61 +128,87 @@ elif selected_tab == "📁 過去履歴":
         if st.session_state["logged_in"]:
             st.markdown("---")
             st.subheader("🛠️ 履歴の修正・削除")
-            # 選択肢も新しい順
-            df_sorted = df.sort_values(by="sort_date", ascending=False)
-            df_sorted['select_label'] = df_sorted['最終点検日'] + " | " + df_sorted['設備名']
-            target = st.selectbox("修正対象を選択", df_sorted['select_label'].tolist())
-            # 選択したラベルから元のIndexを特定
-            idx = df_sorted[df_sorted['select_label'] == target].index[0]
+            # 選択用リスト（最新順）
+            df_sel = df.sort_values(by="sort_date", ascending=False).copy()
+            df_sel['label'] = df_sel['最終点検日'] + " | " + df_sel['設備名']
+            target_label = st.selectbox("修正・削除するデータを選択", df_sel['label'].tolist())
             
-            with st.form("edit_history"):
-                u_date = st.date_input("作業日", df.loc[idx, 'sort_date'])
+            # 選択された行のIndexを特定
+            idx = df_sel[df_sel['label'] == target_label].index[0]
+            
+            with st.form("edit_form"):
+                u_date = st.date_input("作業日を修正", df.loc[idx, 'sort_date'])
                 u_equip = st.text_input("設備名", df.loc[idx, '設備名'])
-                u_content = st.text_area("内容", df.loc[idx, '作業内容'])
+                u_cost = st.number_input("費用", value=int(df.loc[idx, '費用']))
+                u_desc = st.text_area("内容", df.loc[idx, '作業内容'])
+                u_note = st.text_area("備考", df.loc[idx, '備考'])
+                u_up1 = st.file_uploader("前写真変更", type=['jpg','png'])
+                u_up2 = st.file_uploader("後写真変更", type=['jpg','png'])
+
                 if st.form_submit_button("修正を保存"):
                     df.loc[idx, '最終点検日'] = u_date.strftime('%Y-%m-%d')
-                    df.loc[idx, '設備名'] = u_equip
-                    df.loc[idx, '作業内容'] = u_content
-                    # 保存時はソート用列を除いて保存
-                    save_data = df[['設備名', '最終点検日', '作業内容', '費用', '備考', '画像', '画像2']]
-                    conn.update(worksheet="maintenance_data", data=save_data)
+                    df.loc[idx, ['設備名', '作業内容', '備考', '費用']] = [u_equip, u_desc, u_note, u_cost]
+                    if u_up1: df.loc[idx, '画像'] = image_to_base64(u_up1)
+                    if u_up2: df.loc[idx, '画像2'] = image_to_base64(u_up2)
+                    
+                    # 保存（ソートして保存することでシート側も整理）
+                    df['temp_sort'] = pd.to_datetime(df['最終点検日'], errors='coerce')
+                    save_df = df.sort_values(by='temp_sort', ascending=False)[m_cols]
+                    conn.update(worksheet="maintenance_data", data=save_df)
                     st.success("更新しました"); time.sleep(1); st.rerun()
+            
+            # 削除ボタン
+            if st.button("🚨 この履歴を完全に削除"):
+                # 該当行を除外
+                new_df = df.drop(idx)
+                # 保存（ソート維持）
+                new_df['temp_sort'] = pd.to_datetime(new_df['最終点検日'], errors='coerce')
+                save_df = new_df.sort_values(by='temp_sort', ascending=False)[m_cols]
+                conn.update(worksheet="maintenance_data", data=save_df)
+                st.warning("履歴を削除しました"); time.sleep(1); st.rerun()
 
 # ================================================================
-# 📦 2. 在庫管理（省略なし）
+# 📦 2. 在庫管理（フル機能）
 # ================================================================
 elif selected_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 在庫管理")
     st.dataframe(stock_df, use_container_width=True)
+    
     col1, col2 = st.columns(2)
-    with col1.expander("🛠️ 在庫修正"):
-        sel = st.selectbox("部品名", stock_df['部品名'].tolist())
-        s_idx = stock_df[stock_df['部品名'] == sel].index[0]
-        new_q = st.number_input("在庫数", value=int(float(stock_df.loc[s_idx, '在庫数'] or 0)))
-        if st.button("更新"):
-            stock_df.loc[s_idx, '在庫数'] = new_q
-            stock_df.loc[s_idx, '最終更新日'] = date.today().strftime('%Y-%m-%d')
-            conn.update(worksheet="stock_data", data=stock_df)
-            st.success("更新完了"); st.rerun()
-    with col2.expander("➕ 新規部品"):
-        with st.form("new_part"):
+    with col1.expander("🛠️ 在庫修正・削除"):
+        sel_part = st.selectbox("部品名", stock_df['部品名'].tolist())
+        s_idx = stock_df[stock_df['部品名'] == sel_part].index[0]
+        with st.form("stock_edit"):
+            s_q = st.number_input("在庫数", value=int(stock_df.loc[s_idx, '在庫数']))
+            s_p = st.number_input("単価", value=int(stock_df.loc[s_idx, '単価']))
+            if st.form_submit_button("在庫更新"):
+                stock_df.loc[s_idx, ['在庫数', '単価', '最終更新日']] = [s_q, s_p, date.today().strftime('%Y-%m-%d')]
+                conn.update(worksheet="stock_data", data=stock_df)
+                st.success("在庫を更新しました"); time.sleep(1); st.rerun()
+        if st.button("🗑️ この部品を削除"):
+            conn.update(worksheet="stock_data", data=stock_df.drop(s_idx))
+            st.rerun()
+
+    with col2.expander("➕ 新規部品登録"):
+        with st.form("stock_new"):
             n_c = st.selectbox("分類", categories)
             n_n = st.text_input("部品名")
-            if st.form_submit_button("登録"):
-                new_row = pd.DataFrame([{"分類": n_c, "部品名": n_n, "在庫数": 0, "単価": 0, "発注点": 5, "最終更新日": date.today().strftime('%Y-%m-%d')}])
-                conn.update(worksheet="stock_data", data=pd.concat([stock_df_raw, new_row], ignore_index=True))
-                st.rerun()
+            n_q = st.number_input("初期在庫", 0)
+            if st.form_submit_button("新規部品を登録"):
+                new_s = pd.DataFrame([{"分類": n_c, "部品名": n_n, "在庫数": n_q, "単価": 0, "発注点": 5, "最終更新日": date.today().strftime('%Y-%m-%d')}])
+                conn.update(worksheet="stock_data", data=pd.concat([stock_df_raw, new_s], ignore_index=True))
+                st.success("部品を登録しました"); time.sleep(1); st.rerun()
 
 # ================================================================
-# 📝 3. メンテナンス登録（日付問題を解決）
+# 📝 3. メンテナンス登録（日付固定保存）
 # ================================================================
 elif selected_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 記録入力")
-    with st.form("input_form", clear_on_submit=True):
+    with st.form("reg_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         f_cat = c1.selectbox("分類", categories)
         f_name = c1.text_input("機番・名称")
-        f_date = c2.date_input("作業日（ここに入れた日付が保存されます）", date.today())
+        f_date = c2.date_input("作業日", date.today())
         f_cost = c2.number_input("費用", 0)
         f_desc = st.text_area("作業内容")
         f_note = st.text_area("備考")
@@ -181,7 +216,7 @@ elif selected_tab == "📝 メンテナンス登録" and st.session_state["logge
         up2 = st.file_uploader("後写真", type=['jpg','png'])
         
         if st.form_submit_button("保存"):
-            # 1. 新しい行を作成（日付を文字列に固定）
+            # 新規データ作成
             new_entry = pd.DataFrame([{
                 "設備名": f"[{f_cat}] {f_name}",
                 "最終点検日": f_date.strftime('%Y-%m-%d'),
@@ -191,17 +226,11 @@ elif selected_tab == "📝 メンテナンス登録" and st.session_state["logge
                 "画像": image_to_base64(up1),
                 "画像2": image_to_base64(up2)
             }])
-            
-            # 2. 既存の生データと結合
-            # ここで一度日付順に並び替えてから保存することで、シート上も綺麗になります
+            # 生データと結合して日付順に並び替え
             updated_df = pd.concat([df_raw, new_entry], ignore_index=True)
-            
-            # 日付順（新しい順）に並び替えてからシートを更新
-            # これにより、次にアプリを開いた時も最初から並んでいます
             updated_df['temp_sort'] = pd.to_datetime(updated_df['最終点検日'], errors='coerce')
-            updated_df = updated_df.sort_values(by='temp_sort', ascending=False).drop(columns=['temp_sort'])
+            final_df = updated_df.sort_values(by='temp_sort', ascending=False).drop(columns=['temp_sort'])
             
-            conn.update(worksheet="maintenance_data", data=updated_df)
-            st.success(f"{f_date} の記録を保存し、リストを更新しました。")
-            time.sleep(1)
-            st.rerun()
+            conn.update(worksheet="maintenance_data", data=final_df)
+            st.success(f"{f_date} の記録を保存しました。")
+            time.sleep(1); st.rerun()
