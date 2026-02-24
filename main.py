@@ -123,19 +123,27 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             st.pyplot(fig1)
             
         with c2:
-            st.subheader("🔧 月別修理回数推移")
+            st.subheader("🔧 種類別・月別修理回数推移")
             df_trend = df.copy()
             df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
-            # 修理回数をカウントしてピボットテーブルを作成
+            
+            # 分類ごとに列を分けて集計（これで種類ごとの線になります）
             pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='設備名', aggfunc='count').fillna(0)
             
-            fig2, ax2 = plt.subplots()
-            # kind='line' で折れ線グラフを指定、marker='o' でデータポイントに丸印をつける
-            pivot_df.plot(kind='line', marker='o', ax=ax2)
+            # グラフの描画設定（少し横長にして凡例のスペースを確保）
+            fig2, ax2 = plt.subplots(figsize=(7, 4))
+            pivot_df.plot(kind='line', marker='o', ax=ax2, linewidth=2)
             
-            # グラフを見やすくするための追加設定
-            ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True)) # Y軸を必ず整数にする
-            ax2.grid(True, linestyle='--', alpha=0.6) # 背景に薄い点線のグリッドを追加
+            # グラフを見やすくするための調整
+            ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True)) # Y軸を整数に
+            ax2.grid(True, linestyle='--', alpha=0.6) # 背景グリッド
+            ax2.set_ylabel("修理回数 (回)")
+            ax2.set_xlabel("年月")
+            
+            # 凡例をグラフの枠外（右側）に配置して被りを防止
+            ax2.legend(title="設備分類", bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.tight_layout() # レイアウトの崩れを防ぐ
+            
             st.pyplot(fig2)
 
 # 📁 過去履歴
