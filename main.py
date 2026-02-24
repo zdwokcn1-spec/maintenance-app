@@ -113,37 +113,37 @@ if st.session_state.active_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス状況概況")
     if not df.empty:
         df['大分類'] = df['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
+        
+        # グラフエリアを分割
         c1, c2 = st.columns(2)
         
+        # 左側：設備別・累計費用（縦棒グラフ）
         with c1:
             st.subheader("💰 設備別・累計費用")
-            cost_by_equip = df.groupby('大分類')['費用'].sum().sort_values(ascending=True)
-            fig1, ax1 = plt.subplots()
-            cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71')
+            cost_by_equip = df.groupby('大分類')['費用'].sum()
+            
+            fig1, ax1 = plt.subplots(figsize=(6, 4.5))
+            cost_by_equip.plot(kind='bar', ax=ax1, color='#2ecc71', edgecolor='black')
+            ax1.set_ylabel("費用 (円)")
+            ax1.set_xlabel("設備名")
+            ax1.grid(axis='y', linestyle='--', alpha=0.7)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
             st.pyplot(fig1)
             
+        # 右側：設備別・メンテナンス回数（マーカー付き折れ線グラフ）
         with c2:
             st.subheader("🔧 設備別・メンテナンス回数")
-            
-            # 設備（分類）ごとのメンテナンス回数を集計
             count_by_equip = df.groupby('大分類')['設備名'].count()
             
-            fig2, ax2 = plt.subplots(figsize=(7, 4))
-            
-            # 折れ線グラフ（kind='line'）にマーカー（marker='o'）を指定
-            count_by_equip.plot(kind='line', marker='o', ax=ax2, linewidth=2, color='#e74c3c')
-            
-            # グラフを見やすくするための調整
-            ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True)) # Y軸を必ず整数に
-            ax2.grid(True, linestyle='--', alpha=0.6) # 背景に薄いグリッド線
-            
-            ax2.set_ylabel("メンテナンス回数 (回)") # 左側
-            ax2.set_xlabel("設備名（分類）") # 下側
-            
-            # X軸のラベルが重ならないように45度傾ける
+            fig2, ax2 = plt.subplots(figsize=(6, 4.5))
+            count_by_equip.plot(kind='line', marker='o', ax=ax2, linewidth=2, color='#e74c3c', markersize=8)
+            ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+            ax2.set_ylabel("メンテナンス回数 (回)")
+            ax2.set_xlabel("設備名")
+            ax2.grid(True, linestyle='--', alpha=0.7)
             plt.xticks(rotation=45)
-            plt.tight_layout() # レイアウトのはみ出しを防止
-            
+            plt.tight_layout()
             st.pyplot(fig2)
 
 # 📁 過去履歴
@@ -207,22 +207,6 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
                 new_row = pd.DataFrame([{"分類": n_cat, "部品名": n_name, "在庫数": n_qty, "単価": n_price, "発注点": 5, "最終更新日": datetime.now().strftime('%Y-%m-%d')}])
                 conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_row], ignore_index=True))
                 st.success("登録完了"); time.sleep(1); st.rerun()
-
-    st.markdown("---")
-    st.subheader("🛠️ 在庫の修正・削除")
-    s_cat_sel = st.selectbox("分類選択", categories, key="s_cat")
-    f_items = stock_df[stock_df["分類"] == s_cat_sel]
-    if not f_items.empty:
-        t_item = st.selectbox("部品を選択", f_items["部品名"].tolist())
-        s_idx = stock_df[stock_df["部品名"] == t_item].index[0]
-        with st.form("edit_stk"):
-            eq = st.number_input("在庫数", value=int(stock_df.loc[s_idx, "在庫数"]))
-            ep = st.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]))
-            if st.form_submit_button("在庫情報を更新"):
-                stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
-                conn.update(worksheet="stock_data", data=stock_df); st.success("更新完了"); time.sleep(1); st.rerun()
-        if st.button(f"🗑️ {t_item} を削除"):
-            conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != t_item]); st.warning("削除完了"); time.sleep(1); st.rerun()
 
 # 📝 メンテナンス登録
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
