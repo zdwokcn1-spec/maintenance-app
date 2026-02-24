@@ -114,20 +114,28 @@ if st.session_state.active_tab == "📊 ダッシュボード":
     if not df.empty:
         df['大分類'] = df['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
         c1, c2 = st.columns(2)
+        
         with c1:
             st.subheader("💰 設備別・累計費用")
             cost_by_equip = df.groupby('大分類')['費用'].sum().sort_values(ascending=True)
-            fig1, ax1 = plt.subplots(); cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71'); st.pyplot(fig1)
+            fig1, ax1 = plt.subplots()
+            cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71')
+            st.pyplot(fig1)
+            
         with c2:
             st.subheader("🔧 月別修理回数推移")
-            df_trend = df.copy(); df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
-            # 変更点：values='設備名', aggfunc='count' にして修理（レコード）の件数を集計します
+            df_trend = df.copy()
+            df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
+            # 修理回数をカウントしてピボットテーブルを作成
             pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='設備名', aggfunc='count').fillna(0)
             
-            # グラフのY軸を整数にするための設定を追加
             fig2, ax2 = plt.subplots()
+            # kind='line' で折れ線グラフを指定、marker='o' でデータポイントに丸印をつける
             pivot_df.plot(kind='line', marker='o', ax=ax2)
+            
+            # グラフを見やすくするための追加設定
             ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True)) # Y軸を必ず整数にする
+            ax2.grid(True, linestyle='--', alpha=0.6) # 背景に薄い点線のグリッドを追加
             st.pyplot(fig2)
 
 # 📁 過去履歴
