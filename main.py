@@ -242,13 +242,33 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
         wt, wc = c2.date_input("作業日", date.today()), c2.number_input("費用", 0)
         wd, wn = st.text_area("内容"), st.text_area("備考")
         up1, up2 = st.file_uploader("修理前", type=['jpg','png']), st.file_uploader("修理後", type=['jpg','png'])
+        
         if st.form_submit_button("保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
-            new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
-            df_to_save = df_raw.copy()
-            if '最終点検日' in df_to_save.columns:
-                df_to_save['最終点検日'] = pd.to_datetime(df_to_save['最終点検日'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
+            # 1. 新しいレコードを作成（日付を文字列で指定）
+            new_r = pd.DataFrame([{
+                "設備名": f"[{en}] {ed}", 
+                "最終点検日": wt.strftime('%Y-%m-%d'), 
+                "作業内容": wd, 
+                "費用": wc, 
+                "備考": wn, 
+                "画像": b1 or "", 
+                "画像2": b2 or ""
+            }])
+            
+            # 2. 既存の全データを読み込み、日付を文字列化して結合
+            # (読み込み時の df は datetime型なので、保存前に全て str に統一する)
+            df_to_save = df.copy()
+            df_to_save['最終点検日'] = df_to_save['最終点検日'].dt.strftime('%Y-%m-%d')
+            
+            # label などの余計な列があれば削除
+            if 'label' in df_to_save.columns:
+                df_to_save = df_to_save.drop(columns=['label'])
+                
             updated_df = pd.concat([df_to_save, new_r], ignore_index=True)
+            
+            # 3. 更新
             conn.update(worksheet="maintenance_data", data=updated_df)
-            st.success("完了"); time.sleep(1); st.rerun()
+            st.success("正常に登録されました！"); time.sleep(1); st.rerun()
 
