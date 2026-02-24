@@ -208,6 +208,22 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
                 conn.update(worksheet="stock_data", data=pd.concat([stock_df, new_row], ignore_index=True))
                 st.success("登録完了"); time.sleep(1); st.rerun()
 
+    st.markdown("---")
+    st.subheader("🛠️ 在庫の修正・削除")
+    s_cat_sel = st.selectbox("分類選択", categories, key="s_cat")
+    f_items = stock_df[stock_df["分類"] == s_cat_sel]
+    if not f_items.empty:
+        t_item = st.selectbox("部品を選択", f_items["部品名"].tolist())
+        s_idx = stock_df[stock_df["部品名"] == t_item].index[0]
+        with st.form("edit_stk"):
+            eq = st.number_input("在庫数", value=int(stock_df.loc[s_idx, "在庫数"]))
+            ep = st.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]))
+            if st.form_submit_button("在庫情報を更新"):
+                stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
+                conn.update(worksheet="stock_data", data=stock_df); st.success("更新完了"); time.sleep(1); st.rerun()
+        if st.button(f"🗑️ {t_item} を削除"):
+            conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != t_item]); st.warning("削除完了"); time.sleep(1); st.rerun()
+
 # 📝 メンテナンス登録
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 メンテナンス記録の入力")
@@ -231,3 +247,4 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
             }])
             conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_record], ignore_index=True))
             st.success("保存完了！"); time.sleep(1); st.rerun()
+
