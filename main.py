@@ -97,35 +97,6 @@ def on_tab_change(): st.session_state.active_tab = st.session_state.menu_radio
 
 selected_tab = st.radio("メニュー", tab_titles, horizontal=True, label_visibility="collapsed", key="menu_radio", index=tab_titles.index(st.session_state.active_tab) if st.session_state.active_tab in tab_titles else 0, on_change=on_tab_change)
 categories = ["ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
-# ================================================================
-# 📊 0. ダッシュボード（省略せずそのまま）
-# ================================================================
-if st.session_state.active_tab == "📊 ダッシュボード":
-    st.header("📊 メンテナンス集計分析")
-    if not df.empty:
-        st.subheader("📅 集計期間指定")
-        col_d1, col_d2 = st.columns(2)
-        start_date = col_d1.date_input("開始日", df['最終点検日'].min().date())
-        end_date = col_d2.date_input("終了日", df['最終点検日'].max().date())
-        mask = (df['最終点検日'].dt.date >= start_date) & (df['最終点検日'].dt.date <= end_date)
-        f_df = df.loc[mask].copy()
-        if not f_df.empty:
-            f_df['大分類'] = f_df['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
-            f_df['年月'] = f_df['最終点検日'].dt.strftime('%Y-%m')
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("💰 月別費用")
-                m_cost = f_df.groupby('年月')['費用'].sum().sort_index()
-                fig1, ax1 = plt.subplots(); m_cost.plot(kind='bar', ax=ax1, color='#3498db', zorder=3)
-                ax1.yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
-                st.pyplot(fig1)
-            with c2:
-                st.subheader("📈 設備別回数")
-                e_counts = f_df['大分類'].value_counts().sort_index()
-                fig2, ax2 = plt.subplots(); ax2.plot(e_counts.index, e_counts.values, marker='o', color='#e67e22')
-                ax2.yaxis.set_major_locator(MultipleLocator(1))
-                st.pyplot(fig2)
-            st.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
 
 # ================================================================
 # 📁 過去履歴
@@ -176,65 +147,6 @@ if st.session_state.active_tab == "📁 過去履歴":
                     df_to_save['最終点検日'] = df_to_save['最終点検日'].dt.strftime('%Y-%m-%d')
                     conn.update(worksheet="maintenance_data", data=df_to_save)
                     st.success("更新しました"); time.sleep(1); st.rerun()
-# ================================================================
-# 📦 2. 在庫管理（修正・削除機能を完全復旧）
-# ================================================================
-elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
-    st.header("📦 在庫管理・修正")
-    
-    # 1. 在庫一覧の表示
-    st.dataframe(stock_df, use_container_width=True)
-    
-    # 2. 新規追加フォーム
-    with st.expander("➕ 新規部品を登録する"):
-        with st.form("new_stock_form"):
-            c1, c2 = st.columns(2)
-            new_cat = c1.selectbox("分類", categories)
-            new_name = c1.text_input("部品名")
-            new_qty = c2.number_input("初期在庫数", min_value=0, value=0)
-            new_price = c2.number_input("単価", min_value=0, value=0)
-            new_alert = c2.number_input("発注点（この数を下回ると警告）", min_value=0, value=5)
-            
-            if st.form_submit_button("新規登録"):
-                if new_name:
-                    new_row = pd.DataFrame([{
-                        "分類": new_cat, "部品名": new_name, "在庫数": new_qty, 
-                        "単価": new_price, "発注点": new_alert, 
-                        "最終更新日": date.today().strftime('%Y-%m-%d')
-                    }])
-                    updated_stock = pd.concat([stock_df, new_row], ignore_index=True)
-                    conn.update(worksheet="stock_data", data=updated_stock)
-                    st.success(f"{new_name} を登録しました"); time.sleep(1); st.rerun()
-                else:
-                    st.error("部品名を入力してください")
-
-    st.markdown("---")
-    
-    # 3. 在庫の修正・削除フォーム
-    st.subheader("🛠️ 在庫データの修正・削除")
-    if not stock_df.empty:
-        selected_stock_name = st.selectbox("修正する部品を選択", stock_df["部品名"].tolist())
-        s_idx = stock_df[stock_df["部品名"] == selected_stock_name].index[0]
-        
-        with st.form("edit_stock_form"):
-            st.write(f"対象: **{selected_stock_name}**")
-            c1, c2 = st.columns(2)
-            u_stock_qty = c1.number_input("現在の在庫数", value=int(stock_df.loc[s_idx, "在庫数"]))
-            u_stock_price = c1.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]))
-            u_stock_alert = c2.number_input("発注点", value=int(stock_df.loc[s_idx, "発注点"]))
-            u_stock_cat = c2.selectbox("分類を変更", categories, index=categories.index(stock_df.loc[s_idx, "分類"]) if stock_df.loc[s_idx, "分類"] in categories else 0)
-            
-            if st.form_submit_button("在庫データを更新"):
-                stock_df.loc[s_idx, ["分類", "在庫数", "単価", "発注点", "最終更新日"]] = [
-                    u_stock_cat, u_stock_qty, u_stock_price, u_stock_alert, date.today().strftime('%Y-%m-%d')
-                ]
-                conn.update(worksheet="stock_data", data=stock_df)
-                st.success("在庫情報を更新しました"); time.sleep(1); st.rerun()
-        
-        if st.button(f"🗑️ {selected_stock_name} をリストから完全に削除"):
-            new_stock_df = stock_df.drop(s_idx)
-            conn.update(worksheet="stock_data", data=new_stock_df)
-            st.warning("削除しました"); time.sleep(1); st.rerun()                    
 
 # ================================================================
 # 📝 メンテナンス登録
