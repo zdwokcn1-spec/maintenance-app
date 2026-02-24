@@ -86,26 +86,17 @@ categories = ["ジョークラッシャ", "インパクトクラッシャー", "
 # ================================================================
 if selected_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス集計分析")
-    valid_df = df.dropna(subset=['temp_date'])
-    if not valid_df.empty:
-        st.subheader("📅 集計期間指定")
-        col_d1, col_d2 = st.columns(2)
-        start_date = col_d1.date_input("開始日", valid_df['temp_date'].min().date())
-        end_date = col_d2.date_input("終了日", valid_df['temp_date'].max().date())
-        mask = (df['temp_date'].dt.date >= start_date) & (df['temp_date'].dt.date <= end_date)
-        f_df = df.loc[mask].copy()
-        if not f_df.empty:
-            f_df['年月'] = f_df['temp_date'].dt.strftime('%Y-%m')
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("💰 月別費用")
-                m_cost = f_df.groupby('年月')['費用'].sum()
-                st.bar_chart(m_cost)
-            with c2:
-                st.subheader("📈 設備別回数（折れ線）")
-                e_counts = f_df['設備名'].value_counts()
-                st.line_chart(e_counts)
-            st.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
+    f_df = df[df['sort_date'] > '1900-01-01'].copy()
+    if not f_df.empty:
+        f_df['年月'] = f_df['sort_date'].dt.strftime('%Y-%m')
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("💰 月別費用")
+            st.bar_chart(f_df.groupby('年月')['費用'].sum())
+        with c2:
+            st.subheader("📈 設備別回数（折れ線）")
+            st.line_chart(f_df['設備名'].value_counts())
+        st.metric("期間内合計費用", f"{int(f_df['費用'].sum()):,} 円")
 
 # ================================================================
 # 📁 1. 過去履歴（新しい順表示 ＆ 修正・削除）
