@@ -12,7 +12,7 @@ import time
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="設備メンテナンス管理システム", layout="wide")
 
-# --- 2. 権限管理システム (F5対策込み) ---
+# --- 2. 権限管理システム ---
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
@@ -64,6 +64,7 @@ df = fix_columns(df_raw, m_cols)
 s_cols = ['分類', '部品名', '在庫数', '単価', '発注点', '最終更新日']
 stock_df = fix_columns(stock_df_raw, s_cols)
 
+# 型変換の徹底
 for col in ['画像', '画像2']: df[col] = df[col].fillna("").astype(str)
 df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce').fillna(pd.Timestamp(datetime.today()))
 df['費用'] = pd.to_numeric(df['費用'], errors='coerce').fillna(0).astype(int)
@@ -81,38 +82,33 @@ def image_to_base64(uploaded_file):
         return base64.b64encode(buf.getvalue()).decode()
     return None
 
-# --- 6. 【重要】メニュー切り替えロジックの修正 ---
+# --- 6. メニュー切り替え ---
 if st.session_state["logged_in"]:
     tab_titles = ["📊 ダッシュボード", "📁 過去履歴", "📦 在庫管理", "📝 メンテナンス登録"]
 else:
     tab_titles = ["📊 ダッシュボード", "📁 過去履歴"]
 
-# セッション状態に現在地がなければ初期化
 if "active_tab" not in st.session_state or st.session_state.active_tab not in tab_titles:
     st.session_state.active_tab = tab_titles[0]
 
-# メニューをクリックした時に即実行される関数
 def on_tab_change():
     st.session_state.active_tab = st.session_state.menu_radio
 
-# ラジオボタン：on_changeを設定して一回で切り替わるようにする
 selected_tab = st.radio(
     "メニュー", 
     tab_titles, 
     horizontal=True, 
     label_visibility="collapsed", 
-    key="menu_radio", # keyを設定
+    key="menu_radio",
     index=tab_titles.index(st.session_state.active_tab),
-    on_change=on_tab_change # クリックした瞬間に処理
+    on_change=on_tab_change
 )
 
 categories = ["ジョークラッシャ", "インパクトクラッシャー", "スクリーン", "ベルト", "その他"]
 
-# ================================================================
-# 各画面の表示ロジック (st.session_state.active_tab で判定)
-# ================================================================
+# --- 7. 各画面の表示ロジック ---
 
-# 📊 0. ダッシュボード
+# 📊 ダッシュボード
 if st.session_state.active_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス状況概況")
     if not df.empty:
@@ -123,16 +119,24 @@ if st.session_state.active_tab == "📊 ダッシュボード":
             cost_by_equip = df.groupby('大分類')['費用'].sum().sort_values(ascending=True)
             fig1, ax1 = plt.subplots(); cost_by_equip.plot(kind='barh', ax=ax1, color='#2ecc71'); st.pyplot(fig1)
         with c2:
-            st.subheader("📈 月別費用推移")
+            st.subheader("🔧 月別修理回数推移")
             df_trend = df.copy(); df_trend['年月'] = df_trend['最終点検日'].dt.strftime('%Y-%m')
-            pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='費用', aggfunc='sum').fillna(0)
-            fig2, ax2 = plt.subplots(); pivot_df.plot(kind='line', marker='o', ax=ax2); st.pyplot(fig2)
+            # 変更点：values='設備名', aggfunc='count' にして修理（レコード）の件数を集計します
+            pivot_df = df_trend.pivot_table(index='年月', columns='大分類', values='設備名', aggfunc='count').fillna(0)
+            
+            # グラフのY軸を整数にするための設定を追加
+            fig2, ax2 = plt.subplots()
+            pivot_df.plot(kind='line', marker='o', ax=ax2)
+            ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True)) # Y軸を必ず整数にする
+            st.pyplot(fig2)
 
-# 📁 1. 過去履歴
+# 📁 過去履歴
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 メンテナンス過去履歴")
     if not df.empty:
+        df['label'] = df['最終点検日'].dt.strftime('%Y-%m-%d') + " | " + df['設備名'].astype(str)
         sorted_df = df.sort_values(by="最終点検日", ascending=False)
+        
         for i, row in sorted_df.iterrows():
             with st.expander(f"{row['最終点検日'].strftime('%Y-%m-%d')} | {row['設備名']}"):
                 v1, v2 = st.columns([2, 1])
@@ -145,8 +149,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
         if st.session_state["logged_in"]:
             st.markdown("---")
             st.subheader("🛠️ 履歴の修正・削除")
-            df['label'] = df['最終点検日'].dt.strftime('%Y-%m-%d') + " | " + df['設備名'].astype(str)
-            target_h = st.selectbox("修正対象を選択", df['label'].tolist())
+            target_h = st.selectbox("修正対象を選択（作業日 | 設備名）", df['label'].tolist())
             idx_h = df[df['label'] == target_h].index[0]
             curr_h = df.iloc[idx_h]
             
@@ -159,6 +162,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 new_desc = st.text_area("内容", curr_h["作業内容"])
                 up_f1 = st.file_uploader("修理前を更新", type=['jpg','png'], key="up_f1")
                 up_f2 = st.file_uploader("修理後を更新", type=['jpg','png'], key="up_f2")
+                
                 if st.form_submit_button("修正を保存"):
                     img_b1, img_b2 = image_to_base64(up_f1), image_to_base64(up_f2)
                     if img_b1: df.loc[idx_h, "画像"] = img_b1
@@ -166,11 +170,12 @@ elif st.session_state.active_tab == "📁 過去履歴":
                     df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
                     conn.update(worksheet="maintenance_data", data=df.drop(columns=['label'], errors='ignore'))
                     st.success("保存完了"); time.sleep(1); st.rerun()
+            
             if st.button("🚨 この履歴を削除"):
                 conn.update(worksheet="maintenance_data", data=df.drop(idx_h).drop(columns=['label'], errors='ignore'))
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# 📦 2. 在庫管理
+# 📦 在庫管理
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 部品在庫管理")
     v_cat = st.selectbox("表示フィルタ", ["すべて"] + categories)
@@ -203,7 +208,7 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
         if st.button(f"🗑️ {t_item} を削除"):
             conn.update(worksheet="stock_data", data=stock_df[stock_df["部品名"] != t_item]); st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# 📝 3. メンテナンス登録
+# 📝 メンテナンス登録
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 メンテナンス記録の入力")
     with st.form("main_reg", clear_on_submit=True):
@@ -212,8 +217,17 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
         wt, wc = c2.date_input("作業日", datetime.today()), c2.number_input("費用", 0)
         wd, wn = st.text_area("作業内容"), st.text_area("備考")
         up1, up2 = st.file_uploader("修理前", type=['jpg','png']), st.file_uploader("修理後", type=['jpg','png'])
+        
         if st.form_submit_button("記録を保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
-            new_record = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
+            new_record = pd.DataFrame([{
+                "設備名": f"[{en}] {ed}", 
+                "最終点検日": wt.strftime('%Y-%m-%d'), 
+                "作業内容": wd, 
+                "費用": wc, 
+                "備考": wn, 
+                "画像": b1 or "", 
+                "画像2": b2 or ""
+            }])
             conn.update(worksheet="maintenance_data", data=pd.concat([df.drop(columns=['label'], errors='ignore'), new_record], ignore_index=True))
             st.success("保存完了！"); time.sleep(1); st.rerun()
