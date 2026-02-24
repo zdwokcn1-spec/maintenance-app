@@ -78,11 +78,13 @@ def image_to_base64(uploaded_file):
 df_raw, stock_df_raw = load_data()
 
 m_cols = ['設備名', '最終点検日', '作業内容', '費用', '備考', '画像', '画像2']
-df = fix_columns(df_raw, m_cols)
+df = fix_columns(df_raw.copy(), m_cols) # 元データを汚さないようコピー
 s_cols = ['分類', '部品名', '在庫数', '単価', '発注点', '最終更新日']
-stock_df = fix_columns(stock_df_raw, s_cols)
+stock_df = fix_columns(stock_df_raw.copy(), s_cols)
 
+# 型変換を確実に実行
 for col in ['画像', '画像2']: df[col] = df[col].fillna("").astype(str)
+# errors='coerce' で不正な日付をNaTにし、その後フォーマットを整える
 df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce')
 df['費用'] = pd.to_numeric(df['費用'], errors='coerce').fillna(0).astype(int)
 
@@ -140,12 +142,17 @@ if st.session_state.active_tab == "📊 ダッシュボード":
 elif st.session_state.active_tab == "📁 過去履歴":
     st.header("📁 履歴表示・編集・削除")
     if not df.empty:
-        s_df = df.sort_values(by="最終点検日", ascending=False, na_position='last')
+        # 日付順にソート。型変換後の df を使っているので正しくソートされます
+        s_df = df.sort_values(by="最終点検日", ascending=False, na_position='last').copy()
+        
         for i, row in s_df.iterrows():
-            # 【重要修正】日付を「作業日: YYYY-MM-DD」形式で取得。空なら「日付なし」
-            dt_label = row['最終点検日'].strftime('%Y-%m-%d') if pd.notnull(row['最終点検日']) else "日付なし"
+            # 【重要】NaT（日付なし）判定を厳格に行い、存在する日付は確実に表示
+            current_date = row['最終点検日']
+            if pd.notnull(current_date):
+                dt_label = current_date.strftime('%Y-%m-%d')
+            else:
+                dt_label = "日付なし"
             
-            # 見出しに日付を直接表示
             with st.expander(f"作業日: {dt_label} | {row['設備名']}"):
                 v1, v2 = st.columns([2, 1])
                 v1.write(f"**内容:** {row['作業内容']}\n\n**費用:** {row['費用']:,} 円\n\n**備考:** {row['備考']}")
@@ -176,7 +183,7 @@ elif st.session_state.active_tab == "📁 過去履歴":
                 conn.update(worksheet="maintenance_data", data=df.drop(idx).drop(columns=['label']))
                 st.warning("削除完了"); time.sleep(1); st.rerun()
 
-# 📦 在庫管理
+# 📦 在庫管理 (省略なし)
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
     st.header("📦 在庫管理")
     st.dataframe(stock_df, use_container_width=True)
@@ -216,5 +223,6 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
             else:
                 b1, b2 = image_to_base64(up1), image_to_base64(up2)
                 new_r = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": wt.strftime('%Y-%m-%d'), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or ""}])
+                # 保存時は生データ(df_raw)に結合して保存
                 conn.update(worksheet="maintenance_data", data=pd.concat([df_raw, new_r], ignore_index=True))
                 st.success("完了"); time.sleep(1); st.rerun()
