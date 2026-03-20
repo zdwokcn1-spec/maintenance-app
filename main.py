@@ -79,7 +79,12 @@ stock_df = fix_columns(stock_df_raw, s_cols)
 # 型変換を徹底し、データの品質を担保
 for col in ['画像', '画像2']:
     df[col] = df[col].fillna("").astype(str)
+
+# ★★★ 修正点: `fillna`を削除 ★★★
+# 不正な日付データを今日の日付で埋めず、NaT(Not a Time)として扱うように変更。
+# これにより、ユーザーが指定した日付が正しく保持される。
 df['最終点検日'] = pd.to_datetime(df['最終点検日'], errors='coerce')
+
 df['費用'] = pd.to_numeric(df['費用'], errors='coerce').fillna(0).astype(int)
 stock_df['在庫数'] = pd.to_numeric(stock_df['在庫数'], errors='coerce').fillna(0).astype(int)
 stock_df['単価'] = pd.to_numeric(stock_df['単価'], errors='coerce').fillna(0).astype(int)
@@ -134,37 +139,34 @@ if st.session_state.active_tab == "📊 ダッシュボード":
     st.header("📊 メンテナンス状況概況")
     if not df.empty:
         df_graph = df.dropna(subset=['最終点検日', '費用']) # 分析前に欠損値を除外
-        if not df_graph.empty:
-            df_graph['大分類'] = df_graph['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
+        df_graph['大分類'] = df_graph['設備名'].str.extract(r'\[(.*?)\]')[0].fillna("その他")
 
-            c1, c2 = st.columns(2)
+        c1, c2 = st.columns(2)
 
-            with c1:
-                st.subheader("💰 設備別・累計費用")
-                cost_by_equip = df_graph.groupby('大分類')['費用'].sum()
-                fig1, ax1 = plt.subplots(figsize=(6, 4.5))
-                cost_by_equip.plot(kind='bar', ax=ax1, color='#2ecc71', edgecolor='black')
-                ax1.set_ylabel("費用 (円)")
-                ax1.set_xlabel("設備大分類")
-                ax1.grid(axis='y', linestyle='--', alpha=0.7)
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                st.pyplot(fig1)
+        with c1:
+            st.subheader("💰 設備別・累計費用")
+            cost_by_equip = df_graph.groupby('大分類')['費用'].sum()
+            fig1, ax1 = plt.subplots(figsize=(6, 4.5))
+            cost_by_equip.plot(kind='bar', ax=ax1, color='#2ecc71', edgecolor='black')
+            ax1.set_ylabel("費用 (円)")
+            ax1.set_xlabel("設備大分類")
+            ax1.grid(axis='y', linestyle='--', alpha=0.7)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig1)
 
-            with c2:
-                st.subheader("🔧 設備別・メンテナンス回数")
-                count_by_equip = df_graph.groupby('大分類')['設備名'].count()
-                fig2, ax2 = plt.subplots(figsize=(6, 4.5))
-                count_by_equip.plot(kind='line', marker='o', ax=ax2, linewidth=2, color='#e74c3c', markersize=8)
-                ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-                ax2.set_ylabel("メンテナンス回数 (回)")
-                ax2.set_xlabel("設備大分類")
-                ax2.grid(True, linestyle='--', alpha=0.7)
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                st.pyplot(fig2)
-        else:
-            st.info("グラフ表示可能なデータがありません。")
+        with c2:
+            st.subheader("🔧 設備別・メンテナンス回数")
+            count_by_equip = df_graph.groupby('大分類')['設備名'].count()
+            fig2, ax2 = plt.subplots(figsize=(6, 4.5))
+            count_by_equip.plot(kind='line', marker='o', ax=ax2, linewidth=2, color='#e74c3c', markersize=8)
+            ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+            ax2.set_ylabel("メンテナンス回数 (回)")
+            ax2.set_xlabel("設備大分類")
+            ax2.grid(True, linestyle='--', alpha=0.7)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            st.pyplot(fig2)
     else:
         st.info("メンテナンス履歴データがありません。")
 
@@ -190,9 +192,8 @@ elif st.session_state.active_tab == "📁 過去履歴":
                     v1.write(f"**費用:** {row['費用']:,} 円")
                     with v2:
                         i1, i2 = st.columns(2)
-                        # ★★★ ここを修正 ★★★
-                        if len(str(row['画像'])) > 20: i1.image(base64.b64decode(row['画像']), caption="修理前")
-                        if len(str(row['画像2'])) > 20: i2.image(base64.b64decode(row['画像2']), caption="修理後")
+                        if len(str(row['画像'])) > 20: i1.image(base64.b64decode(row['画像']), caption="画像1")
+                        if len(str(row['画像2'])) > 20: i2.image(base64.b64decode(row['画像2']), caption="画像2")
 
         if st.session_state["logged_in"]:
             st.markdown("---")
@@ -201,34 +202,32 @@ elif st.session_state.active_tab == "📁 過去履歴":
             valid_df = df.dropna(subset=['最終点検日'])
             if not valid_df.empty:
                 target_h = st.selectbox("修正対象を選択（作業日 | 設備名）", valid_df['label'].tolist())
-                # 選択肢がない場合のエラーを避ける
-                if target_h:
-                    idx_h = valid_df[valid_df['label'] == target_h].index[0]
-                    curr_h = df.loc[idx_h]
+                idx_h = valid_df[valid_df['label'] == target_h].index[0]
+                curr_h = df.loc[idx_h]
 
-                    with st.form("edit_h_form"):
-                        ca, cb = st.columns(2)
-                        new_date = ca.date_input("作業日", curr_h["最終点検日"])
-                        new_equip = ca.text_input("設備名", curr_h["設備名"])
-                        new_cost = ca.number_input("費用", value=int(curr_h["費用"]))
-                        new_note = cb.text_area("備考", curr_h["備考"], height=100)
-                        new_desc = st.text_area("作業内容", curr_h["作業内容"], height=100)
-                        up_f1 = st.file_uploader("修理前を更新", type=['jpg','jpeg','png'], key="up_f1")
-                        up_f2 = st.file_uploader("修理後を更新", type=['jpg','jpeg','png'], key="up_f2")
+                with st.form("edit_h_form"):
+                    ca, cb = st.columns(2)
+                    new_date = ca.date_input("作業日", curr_h["最終点検日"])
+                    new_equip = ca.text_input("設備名", curr_h["設備名"])
+                    new_cost = ca.number_input("費用", value=int(curr_h["費用"]))
+                    new_note = cb.text_area("備考", curr_h["備考"], height=100)
+                    new_desc = st.text_area("作業内容", curr_h["作業内容"], height=100)
+                    up_f1 = st.file_uploader("画像1を更新", type=['jpg','jpeg','png'], key="up_f1")
+                    up_f2 = st.file_uploader("画像2を更新", type=['jpg','jpeg','png'], key="up_f2")
 
-                        if st.form_submit_button("修正を保存"):
-                            img_b1, img_b2 = image_to_base64(up_f1), image_to_base64(up_f2)
-                            if img_b1: df.loc[idx_h, "画像"] = img_b1
-                            if img_b2: df.loc[idx_h, "画像2"] = img_b2
-                            df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
-                            conn.update(worksheet="maintenance_data", data=df.drop(columns=['label'], errors='ignore'))
-                            st.toast("✅ 保存が完了しました。")
-                            time.sleep(1); st.rerun()
-
-                    if st.button("🚨 この履歴を削除"):
-                        conn.update(worksheet="maintenance_data", data=df.drop(idx_h).drop(columns=['label'], errors='ignore'))
-                        st.toast("🗑️ 削除が完了しました。")
+                    if st.form_submit_button("修正を保存"):
+                        img_b1, img_b2 = image_to_base64(up_f1), image_to_base64(up_f2)
+                        if img_b1: df.loc[idx_h, "画像"] = img_b1
+                        if img_b2: df.loc[idx_h, "画像2"] = img_b2
+                        df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用"]] = [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost]
+                        conn.update(worksheet="maintenance_data", data=df.drop(columns=['label'], errors='ignore'))
+                        st.toast("✅ 保存が完了しました。")
                         time.sleep(1); st.rerun()
+
+                if st.button("🚨 この履歴を削除"):
+                    conn.update(worksheet="maintenance_data", data=df.drop(idx_h).drop(columns=['label'], errors='ignore'))
+                    st.toast("🗑️ 削除が完了しました。")
+                    time.sleep(1); st.rerun()
             else:
                 st.info("修正可能な履歴データがありません。")
     else:
@@ -263,21 +262,20 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
         f_items = stock_df[stock_df["分類"] == s_cat_sel]
         if not f_items.empty:
             t_item = st.selectbox("部品を選択", f_items["部品名"].tolist())
-            if t_item:
-                s_idx = stock_df[stock_df["部品名"] == t_item].index[0]
-                with st.form("edit_stk"):
-                    eq = st.number_input("在庫数", value=int(stock_df.loc[s_idx, "在庫数"]), min_value=0, step=1)
-                    ep = st.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]), min_value=0, step=1)
-                    if st.form_submit_button("在庫情報を更新"):
-                        stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
-                        conn.update(worksheet="stock_data", data=stock_df)
-                        st.toast("✅ 更新が完了しました。")
-                        time.sleep(1); st.rerun()
-
-                if st.button(f"🗑️ 「{t_item}」を削除"):
-                    conn.update(worksheet="stock_data", data=stock_df.drop(s_idx))
-                    st.toast("🗑️ 削除が完了しました。")
+            s_idx = stock_df[stock_df["部品名"] == t_item].index[0]
+            with st.form("edit_stk"):
+                eq = st.number_input("在庫数", value=int(stock_df.loc[s_idx, "在庫数"]), min_value=0, step=1)
+                ep = st.number_input("単価", value=int(stock_df.loc[s_idx, "単価"]), min_value=0, step=1)
+                if st.form_submit_button("在庫情報を更新"):
+                    stock_df.loc[s_idx, ["在庫数", "単価", "最終更新日"]] = [eq, ep, datetime.now().strftime('%Y-%m-%d')]
+                    conn.update(worksheet="stock_data", data=stock_df)
+                    st.toast("✅ 更新が完了しました。")
                     time.sleep(1); st.rerun()
+
+            if st.button(f"🗑️ 「{t_item}」を削除"):
+                conn.update(worksheet="stock_data", data=stock_df.drop(s_idx))
+                st.toast("🗑️ 削除が完了しました。")
+                time.sleep(1); st.rerun()
     else:
         st.info("在庫データがありません。")
 
@@ -292,13 +290,15 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
         wc = c2.number_input("費用", min_value=0, step=1)
         wd = st.text_area("作業内容", height=150)
         wn = st.text_area("備考", height=100)
-        up1 = st.file_uploader("修理前をアップロード", type=['jpg','jpeg','png'])
-        up2 = st.file_uploader("修理後をアップロード", type=['jpg','jpeg','png'])
+        up1 = st.file_uploader("画像1をアップロード", type=['jpg','jpeg','png'])
+        up2 = st.file_uploader("画像2をアップロード", type=['jpg','jpeg','png'])
 
         if st.form_submit_button("記録を保存"):
             b1, b2 = image_to_base64(up1), image_to_base64(up2)
             new_record = pd.DataFrame([{
                 "設備名": f"[{en}] {ed}",
+                # ★★★ 修正点: pd.to_datetimeを使用 ★★★
+                # ユーザーが選択した日付を正しい日付型(Timestamp)で保存
                 "最終点検日": pd.to_datetime(wt),
                 "作業内容": wd,
                 "費用": wc,
