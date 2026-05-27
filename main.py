@@ -39,21 +39,28 @@ with st.sidebar:
             st.query_params.clear()
             st.rerun()
 
-# --- 3. データ読み込み ---
+# --- 3. データ読み込み --- ### 修正箇所 ###
+
+# まずConnectionオブジェクトを先に作成
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# キャッシュする関数はConnectionオブジェクトを引数にとり、DataFrameのみを返すようにする
 @st.cache_data(ttl=1)
-def load_data_from_sheets():
+def load_data_from_sheets(_conn):
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(worksheet="maintenance_data")
-        stock = conn.read(worksheet="stock_data")
-        return df, stock, conn
+        df = _conn.read(worksheet="maintenance_data")
+        stock = _conn.read(worksheet="stock_data")
+        return df, stock
     except Exception as e:
         st.error(f"Google Sheetsへの接続エラー: {e}")
-        st.info("APIの利用制限に達しているか、シート名が間違っている可能性があります。Google Sheetsの'maintenance_data'シートに '使用部品' 列を追加したか確認してください。")
-        return pd.DataFrame(), pd.DataFrame(), None
+        st.info("APIの利用制限に達しているか、シート名が間違っている可能性があります。'maintenance_data' と 'stock_data' シートが存在するか確認してください。")
+        return pd.DataFrame(), pd.DataFrame()
 
-df_raw, stock_df_raw, conn = load_data_from_sheets()
-if conn is None:
+# 関数を呼び出してデータをロード
+df_raw, stock_df_raw = load_data_from_sheets(conn)
+
+if df_raw.empty and stock_df_raw.empty:
+    st.warning("データの読み込みに失敗しました。アプリを続行できません。")
     st.stop()
 
 
@@ -185,21 +192,20 @@ elif st.session_state.active_tab == "📁 過去履歴":
             st.markdown("---")
             st.subheader("🛠️ 履歴の修正・削除")
             label_to_index_map = {f"{row['最終点検日'].strftime('%Y-%m-%d')} | {row['設備名']} (記録ID: {index})": index for index, row in filtered_df.iterrows()}
-            target_label = st.selectbox("修正・削除対象を選択", list(label_to_index_map.keys()), index=None)
+            target_label = st.selectbox("修正・削除対象を選択", list(label_to_index_map.keys()), index=None, placeholder="修正したい履歴を選択してください")
             
             if target_label:
                 idx_h = label_to_index_map[target_label]
                 curr_h = df.loc[idx_h]
 
-                ### 修正機能の復活 ###
                 with st.form("edit_h_form"):
                     st.write("#### メンテナンス記録の修正")
                     ca, cb = st.columns(2)
-                    new_date = ca.date_input("作業日", curr_h["最終点検日"])
-                    new_equip = ca.text_input("設備名", curr_h["設備名"])
-                    new_cost = ca.number_input("費用", value=int(curr_h["費用"]))
-                    new_note = cb.text_area("備考", curr_h["備考"], height=100)
-                    new_desc = st.text_area("作業内容", curr_h["作業内容"], height=150)
+                    new_date = ca.date_input("作業日", curr_h["最終点検日"], key=f"edit_date_{idx_h}")
+                    new_equip = ca.text_input("設備名", curr_h["設備名"], key=f"edit_equip_{idx_h}")
+                    new_cost = ca.number_input("費用", value=int(curr_h["費用"]), key=f"edit_cost_{idx_h}")
+                    new_note = cb.text_area("備考", curr_h["備考"], height=100, key=f"edit_note_{idx_h}")
+                    new_desc = st.text_area("作業内容", curr_h["作業内容"], height=150, key=f"edit_desc_{idx_h}")
                     
                     st.write("#### 使用部品の修正")
                     try:
@@ -207,69 +213,62 @@ elif st.session_state.active_tab == "📁 過去履歴":
                     except (json.JSONDecodeError, TypeError):
                         current_used_parts = []
                     
-                    # 編集用の部品リストを作成
-                    if 'edited_parts' not in st.session_state:
-                        st.session_state.edited_parts = current_used_parts.copy()
+                    if f"edited_parts_{idx_h}" not in st.session_state:
+                        st.session_state[f"edited_parts_{idx_h}"] = current_used_parts.copy()
 
-                    def draw_parts_editor():
-                        for i, part in enumerate(st.session_state.edited_parts):
-                            p_col1, p_col2, p_col3 = st.columns([3, 1, 1])
-                            p_col1.text(f"部品: {part['部品名']}")
-                            new_qty = p_col2.number_input(f"個数##{i}", value=part['個数'], min_value=1, step=1, key=f"edit_qty_{i}")
-                            st.session_state.edited_parts[i]['個数'] = new_qty
-                            if p_col3.button(f"削除##{i}", key=f"del_part_{i}"):
-                                st.session_state.edited_parts.pop(i)
-                                st.rerun()
+                    edited_parts_list = st.session_state[f"edited_parts_{idx_h}"]
+                    
+                    for i, part in enumerate(edited_parts_list):
+                        p_col1, p_col2, p_col3 = st.columns([3, 1, 1])
+                        p_col1.text(f"部品: {part['部品名']}")
+                        
+                        original_qty = next((p['個数'] for p in current_used_parts if p['部品名'] == part['部品名']), 0)
+                        current_stock = int(stock_df.loc[stock_df['部品名'] == part['部品名'], '在庫数'].iloc[0])
+                        max_val = current_stock + original_qty
+                        
+                        new_qty = p_col2.number_input(f"個数 (現在庫: {current_stock})", value=part['個数'], min_value=1, max_value=max_val, step=1, key=f"edit_qty_{idx_h}_{i}")
+                        edited_parts_list[i]['個数'] = new_qty
+                        if p_col3.button(f"削除", key=f"del_part_{idx_h}_{i}"):
+                            edited_parts_list.pop(i)
+                            st.rerun()
 
-                    draw_parts_editor()
-
-                    # 新しい部品を追加するUI
                     st.write("##### 新しい部品を追加")
-                    available_parts = stock_df[stock_df['在庫数'] > 0]['部品名'].tolist()
-                    part_to_add = st.selectbox("在庫から部品を選択", ["-"] + available_parts, key="add_part_select")
-                    if part_to_add != "-":
-                        if not any(p['部品名'] == part_to_add for p in st.session_state.edited_parts):
-                            st.session_state.edited_parts.append({'部品名': part_to_add, '個数': 1})
+                    all_parts = stock_df['部品名'].tolist()
+                    part_to_add = st.selectbox("在庫から部品を選択", ["-"] + all_parts, key=f"add_part_select_{idx_h}")
+                    if st.button("部品を追加", key=f"add_part_btn_{idx_h}") and part_to_add != "-":
+                        if not any(p['部品名'] == part_to_add for p in edited_parts_list):
+                            edited_parts_list.append({'部品名': part_to_add, '個数': 1})
                             st.rerun()
                     
                     st.markdown("---")
-                    up_f1 = st.file_uploader("修理前を更新", type=['jpg','jpeg','png'], key="up_f1")
-                    up_f2 = st.file_uploader("修理後を更新", type=['jpg','jpeg','png'], key="up_f2")
+                    up_f1 = st.file_uploader("修理前を更新", type=['jpg','jpeg','png'], key=f"up_f1_{idx_h}")
+                    up_f2 = st.file_uploader("修理後を更新", type=['jpg','jpeg','png'], key=f"up_f2_{idx_h}")
 
                     if st.form_submit_button("✔️ 修正を保存"):
                         with st.spinner("データを更新しています..."):
-                            # 1. 在庫を一旦元に戻す
                             temp_stock = update_stock(stock_df, current_used_parts, operation='add')
-                            # 2. 新しい部品情報で在庫を再度引き落とす
-                            new_used_parts_list = st.session_state.edited_parts
-                            final_stock = update_stock(temp_stock, new_used_parts_list, operation='subtract')
+                            final_stock = update_stock(temp_stock, edited_parts_list, operation='subtract')
 
-                            # メンテナンス記録を更新
                             img_b1, img_b2 = image_to_base64(up_f1), image_to_base64(up_f2)
                             if img_b1: df.loc[idx_h, "画像"] = img_b1
                             if img_b2: df.loc[idx_h, "画像2"] = img_b2
                             match = re.search(r'\[(.*?)\]', new_equip)
                             new_category = match.group(1) if match else "その他"
                             df.loc[idx_h, ["最終点検日", "設備名", "作業内容", "備考", "費用", "大分類", "使用部品"]] = \
-                                [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost, new_category, json.dumps(new_used_parts_list, ensure_ascii=False)]
+                                [pd.to_datetime(new_date), new_equip, new_desc, new_note, new_cost, new_category, json.dumps(edited_parts_list, ensure_ascii=False)]
                             
-                            # Google Sheetsを更新
                             conn.update(worksheet="maintenance_data", data=df)
                             conn.update(worksheet="stock_data", data=final_stock)
 
-                        del st.session_state.edited_parts # セッションをクリーンアップ
-                        st.toast("✅ 修正が完了しました。")
-                        time.sleep(1); st.rerun()
+                        del st.session_state[f"edited_parts_{idx_h}"]
+                        st.toast("✅ 修正が完了しました。"); time.sleep(1); st.rerun()
 
-                # 削除機能
-                if st.button("🚨 この履歴を削除", key="delete_button"):
+                if st.button("🚨 この履歴を削除", key=f"delete_button_{idx_h}"):
                     with st.spinner("データを削除し、在庫を更新中..."):
                         record_to_delete = df.loc[idx_h]
                         try:
                             used_parts = json.loads(record_to_delete['使用部品']) if record_to_delete['使用部品'] and record_to_delete['使用部品'] != '[]' else []
-                            # 在庫を元に戻す
                             final_stock = update_stock(stock_df, used_parts, operation='add')
-                            # Google Sheetsを更新
                             conn.update(worksheet="stock_data", data=final_stock)
                             conn.update(worksheet="maintenance_data", data=df.drop(idx_h))
                             st.toast("🗑️ 削除と在庫の更新が完了しました。")
@@ -279,7 +278,6 @@ elif st.session_state.active_tab == "📁 過去履歴":
 
     else:
         st.info("指定された条件に合致する履歴データがありません。")
-
 
 # 📦 在庫管理 (変更なし)
 elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["logged_in"]:
@@ -319,28 +317,29 @@ elif st.session_state.active_tab == "📦 在庫管理" and st.session_state["lo
 # 📝 メンテナンス登録
 elif st.session_state.active_tab == "📝 メンテナンス登録" and st.session_state["logged_in"]:
     st.header("📝 メンテナンス記録の入力")
-    with st.form("main_reg"):
+    with st.form("main_reg", clear_on_submit=True):
         c1, c2 = st.columns(2)
         en = c1.selectbox("分類", categories, key="reg_cat"); ed = c1.text_input("機番・名称"); wt = c2.date_input("作業日", datetime.today()); wc = c2.number_input("費用", min_value=0, step=1); wd = st.text_area("作業内容", height=150); wn = st.text_area("備考", height=100)
         st.markdown("---")
         st.subheader("🔩 使用部品の登録")
         if not stock_df.empty:
-            available_parts = stock_df[stock_df['在庫数'] > 0]['部品名'].tolist()
             if 'temp_used_parts' not in st.session_state: st.session_state.temp_used_parts = []
             
             part_col1, part_col2 = st.columns([2,1])
-            part_to_add = part_col1.selectbox("在庫から使用した部品を選択", ["-"] + available_parts)
-            if part_col2.button("部品を追加", use_container_width=True) and part_to_add != "-":
-                if not any(p['部品名'] == part_to_add for p in st.session_state.temp_used_parts):
-                    st.session_state.temp_used_parts.append({'部品名': part_to_add, '個数': 1})
+            available_parts_reg = stock_df[stock_df['在庫数'] > 0]['部品名'].tolist()
+            part_to_add_reg = part_col1.selectbox("在庫から使用した部品を選択", ["-"] + available_parts_reg, key="reg_part_select")
+            if part_col2.button("部品を追加", use_container_width=True) and part_to_add_reg != "-":
+                if not any(p['部品名'] == part_to_add_reg for p in st.session_state.temp_used_parts):
+                    st.session_state.temp_used_parts.append({'部品名': part_to_add_reg, '個数': 1})
+                st.rerun()
             
             used_parts_details_input = []
             for i, part in enumerate(st.session_state.temp_used_parts):
                 up_c1, up_c2, up_c3 = st.columns([2,1,1])
                 up_c1.text(f"部品: {part['部品名']}")
                 current_stock = int(stock_df.loc[stock_df['部品名'] == part['部品名'], '在庫数'].iloc[0])
-                qty = up_c2.number_input(f"使用個数 (在庫:{current_stock})", min_value=1, max_value=current_stock, step=1, key=f"qty_{i}")
-                if up_c3.button(f"削除", key=f"del_{i}", use_container_width=True):
+                qty = up_c2.number_input(f"使用個数 (在庫:{current_stock})", min_value=1, max_value=current_stock, step=1, key=f"reg_qty_{i}")
+                if up_c3.button(f"削除", key=f"reg_del_{i}", use_container_width=True):
                     st.session_state.temp_used_parts.pop(i)
                     st.rerun()
                 used_parts_details_input.append({"部品名": part['部品名'], "個数": qty})
@@ -355,5 +354,5 @@ elif st.session_state.active_tab == "📝 メンテナンス登録" and st.sessi
                 b1, b2 = image_to_base64(up1), image_to_base64(up2); used_parts_json = json.dumps(used_parts_details_input, ensure_ascii=False) if used_parts_details_input else '[]'
                 new_record = pd.DataFrame([{"設備名": f"[{en}] {ed}", "最終点検日": pd.to_datetime(wt), "作業内容": wd, "費用": wc, "備考": wn, "画像": b1 or "", "画像2": b2 or "", "使用部品": used_parts_json}])
                 df_to_save = df.drop(columns=['大分類'], errors='ignore'); updated_df = pd.concat([df_to_save, new_record], ignore_index=True); conn.update(worksheet="maintenance_data", data=updated_df)
-            del st.session_state.temp_used_parts # セッションをクリーンアップ
+            del st.session_state.temp_used_parts
             st.success("✅ 保存と在庫の更新が完了しました！"); time.sleep(1); st.rerun()
